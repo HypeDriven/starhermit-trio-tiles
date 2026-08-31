@@ -1,0 +1,13 @@
+{
+  "name": "trio-tiles",
+  "version": "1.0.0",
+  "description": "Trio Tiles — a serene selection puzzle. Move exposed tiles into a seven-slot tray; three identical symbols clear.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "node tools/check-syntax.mjs",
+    "start": "node server.js"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

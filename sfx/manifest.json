@@ -1,0 +1,74 @@
+[
+  {
+    "name": "tile-pick-a",
+    "seconds": 1,
+    "prompt": "A small glazed ceramic tile being lifted off a polished wooden tea table, soft clink with a faint scrape, short and dry, close mic.",
+    "event": "pick"
+  },
+  {
+    "name": "tile-pick-b",
+    "seconds": 1,
+    "prompt": "A porcelain mahjong-style tile tapped and lifted from a lacquered wood surface, gentle ceramic click with a woody undertone.",
+    "event": "pick"
+  },
+  {
+    "name": "triple-clear-a",
+    "seconds": 2,
+    "prompt": "Three small ceramic tiles knocked together in quick succession then slid off a wooden tray, bright clinks with a soft wooden shuffle.",
+    "event": "triple"
+  },
+  {
+    "name": "triple-clear-b",
+    "seconds": 2,
+    "prompt": "A cheerful cluster of porcelain tile clinks, like three mahjong tiles stacked together at once, ending with a short airy shimmer.",
+    "event": "triple"
+  },
+  {
+    "name": "invalid-deny-a",
+    "seconds": 1,
+    "prompt": "A single dull wooden knock on a thick tabletop, muted and low, like a finger thudding wood once in gentle refusal.",
+    "event": "invalid"
+  },
+  {
+    "name": "invalid-deny-b",
+    "seconds": 1,
+    "prompt": "A soft double thud of a knuckle on a cork coaster, muffled, flat and short, conveying a quiet no.",
+    "event": "invalid"
+  },
+  {
+    "name": "undo-swoop",
+    "seconds": 1,
+    "prompt": "A soft reversed whoosh, like a small cloth being quickly pulled back across a wooden table, airy and brief.",
+    "event": "undo"
+  },
+  {
+    "name": "hint-chime",
+    "seconds": 2,
+    "prompt": "A single gentle strike of a small brass bell, warm ringing tone that fades naturally, quiet and intimate.",
+    "event": "hint"
+  },
+  {
+    "name": "win-fanfare",
+    "seconds": 3,
+    "prompt": "A warm celebratory cascade of small hand bells and ceramic clinks rising together, like a tiny tea ceremony finale, joyful but gentle.",
+    "event": "win"
+  },
+  {
+    "name": "lose-droop",
+    "seconds": 2,
+    "prompt": "Two soft low wooden marimba notes descending slowly, mellow and wistful, like a quiet end to a round.",
+    "event": "lose"
+  },
+  {
+    "name": "ui-click-a",
+    "seconds": 1,
+    "prompt": "A short soft click of a small bamboo toggle switch, crisp and quiet, close-mic'd, no reverb.",
+    "event": "uiClick"
+  },
+  {
+    "name": "ui-click-b",
+    "seconds": 1,
+    "prompt": "A gentle tap on a small round wooden button, brief rounded knock, dry and intimate.",
+    "event": "uiClick"
+  }
+]

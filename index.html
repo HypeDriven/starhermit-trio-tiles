@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2e1f16">
+  <meta name="description" content="Trio Tiles — move exposed tiles into a seven-slot tray; three identical symbols clear.">
+  <title>Trio Tiles</title>
+  <link rel="stylesheet" href="css/main.css">
+  <script type="importmap">
+    { "imports": { "three": "./js/vendor/three.module.js" } }
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to game interface</a>
+
+  <!-- Three.js canvas region: fills the game region, never the only UI -->
+  <div id="canvas-region" aria-hidden="true">
+    <canvas id="game-canvas"></canvas>
+  </div>
+
+  <!-- Live regions (objective / turn / score / errors / results) -->
+  <div class="visually-hidden" aria-live="polite" id="live-objective"></div>
+  <div class="visually-hidden" aria-live="polite" id="live-score"></div>
+  <div class="visually-hidden" aria-live="assertive" id="live-errors"></div>
+  <div class="visually-hidden" aria-live="polite" id="live-results"></div>
+  <div id="captions" class="captions" aria-live="polite"></div>
+
+  <main id="main">
+    <!-- ============ Boot ============ -->
+    <section id="screen-boot" class="screen" data-screen="boot" aria-labelledby="boot-h">
+      <h1 id="boot-h" class="visually-hidden">Trio Tiles is loading</h1>
+      <div class="panel center-panel">
+        <div class="logo-mark" aria-hidden="true">◈</div>
+        <p id="boot-status" role="status">Warming the teapot…</p>
+        <progress id="boot-progress" max="4" value="0">Loading</progress>
+      </div>
+    </section>
+
+    <!-- ============ No WebGL compatibility message ============ -->
+    <section id="screen-nogl" class="screen" data-screen="nogl" hidden aria-labelledby="nogl-h">
+      <div class="panel center-panel">
+        <h1 id="nogl-h">3D unavailable</h1>
+        <p>Trio Tiles needs WebGL to set the tea table. Your progress and settings are safe — try a browser with hardware acceleration enabled.</p>
+      </div>
+    </section>
+
+    <!-- ============ Title / home ============ -->
+    <section id="screen-title" class="screen" data-screen="title" hidden aria-labelledby="title-h">
+      <div class="panel center-panel title-panel">
+        <h1 id="title-h">Trio Tiles</h1>
+        <p class="tagline">A quiet table. Seven slots. Three of a kind.</p>
+        <button id="btn-play" class="btn btn-primary btn-big" type="button">Play</button>
+        <div class="title-secondary">
+          <button id="btn-title-daily" class="btn" type="button">Daily Steep</button>
+          <button id="btn-title-journey" class="btn" type="button">Journey</button>
+          <button id="btn-title-help" class="btn" type="button">How to Play</button>
+          <button id="btn-title-settings" class="btn" type="button">Settings</button>
+        </div>
+        <p class="profile-line">
+          Playing as
+          <button id="btn-profile-name" class="btn-link" type="button" title="Change display name">Guest</button>
+          <span id="title-online" class="badge" hidden>online</span>
+          <span id="title-offline" class="badge badge-dim" hidden>offline</span>
+        </p>
+        <p id="title-progress" class="dim-line"></p>
+      </div>
+    </section>
+
+    <!-- ============ Mode select ============ -->
+    <section id="screen-modes" class="screen" data-screen="modes" hidden aria-labelledby="modes-h">
+      <div class="panel center-panel wide-panel">
+        <h1 id="modes-h">Choose a mode</h1>
+        <div class="card-grid" id="mode-cards" role="list">
+          <button class="card" role="listitem" type="button" data-mode="learn">
+            <span class="card-title">Learn</span>
+            <span class="card-desc">Short interactive lessons — one rule at a time.</span>
+          </button>
+          <button class="card" role="listitem" type="button" data-mode="journey">
+            <span class="card-title">Journey</span>
+            <span class="card-desc">48 authored stages across six chapters.</span>
+            <span class="card-meta" id="mode-journey-meta"></span>
+          </button>
+          <button class="card" role="listitem" type="button" data-mode="daily">
+            <span class="card-title">Daily Steep</span>
+            <span class="card-desc">One shared table per day, ranked.</span>
+            <span class="card-meta" id="mode-daily-meta"></span>
+          </button>
+          <button class="card" role="listitem" type="button" data-mode="practice">
+            <span class="card-title">Practice</span>
+            <span class="card-desc">Pick a difficulty. Undo allowed, unranked.</span>
+          </button>
+          <button class="card" role="listitem" type="button" data-mode="challenge">
+            <span class="card-title">Challenge</span>
+            <span class="card-desc">Clocks, narrow trays, no hints.</span>
+          </button>
+          <button class="card" role="listitem" type="button" data-mode="boards">
+            <span class="card-title">Score Chase</span>
+            <span class="card-desc">Compare scores, near or far.</span>
+          </button>
+        </div>
+        <button class="btn btn-back" type="button" data-nav="title">Back</button>
+      </div>
+    </section>
+
+    <!-- ============ Mode setup (list rendered per mode) ============ -->
+    <section id="screen-setup" class="screen" data-screen="setup" hidden aria-labelledby="setup-h">
+      <div class="panel center-panel wide-panel">
+        <h1 id="setup-h">Set up</h1>
+        <p id="setup-blurb" class="dim-line"></p>
+        <div id="setup-list" class="setup-list" role="list"></div>
+        <div id="setup-extra" class="setup-extra"></div>
+        <button class="btn btn-back" type="button" data-nav="modes">Back</button>
+      </div>
+    </section>
+
+    <!-- ============ Play HUD ============ -->
+    <section id="screen-play" class="screen screen-hud" data-screen="play" hidden aria-labelledby="hud-objective">
+      <header class="hud-top">
+        <div class="hud-objective">
+          <h1 id="hud-objective">Clear the table</h1>
+          <p id="hud-sub" class="dim-line"></p>
+        </div>
+        <div class="hud-stats">
+          <span id="hud-progress" class="stat" aria-label="tiles remaining">0 tiles</span>
+          <span id="hud-score" class="stat" aria-label="score">0</span>
+          <span id="hud-timer" class="stat" aria-label="time" hidden>0:00</span>
+          <span id="hud-moves" class="stat" aria-label="moves" hidden>0 moves</span>
+        </div>
+      </header>
+
+      <div id="tutorial-banner" class="tutorial-banner" hidden>
+        <p id="tutorial-text"></p>
+      </div>
+
+      <footer class="hud-bottom">
+        <div id="tray-gauge" class="tray-gauge" role="img" aria-label="Tray contents"></div>
+        <div class="hud-actions">
+          <button id="btn-undo" class="btn btn-hud" type="button" title="Undo (U)">Undo</button>
+          <button id="btn-hint" class="btn btn-hud" type="button" title="Hint (H)">Hint</button>
+          <button id="btn-camera" class="btn btn-hud" type="button" title="Reset camera (C)">Camera</button>
+          <button id="btn-pause" class="btn btn-hud" type="button" title="Pause (Esc)">Pause</button>
+        </div>
+      </footer>
+
+      <!-- Accessibility mirror: DOM equivalents for canvas controls -->
+      <details id="board-mirror" class="board-mirror">
+        <summary>Board mirror — available tiles (keyboard friendly)</summary>
+        <p id="mirror-summary" class="dim-line"></p>
+        <ul id="mirror-list" class="mirror-list"></ul>
+      </details>
+    </section>
+
+    <!-- ============ Results ============ -->
+    <section id="screen-results" class="screen" data-screen="results" hidden aria-labelledby="results-h">
+      <div class="panel center-panel">
+        <h1 id="results-h">Round over</h1>
+        <p id="results-sub" class="dim-line"></p>
+        <table class="score-table" aria-label="Score breakdown">
+          <tbody id="results-rows"></tbody>
+          <tfoot>
+            <tr><th scope="row">Total</th><td id="results-total">0</td></tr>
+          </tfoot>
+        </table>
+        <p id="results-stars" class="stars" aria-label="stars earned"></p>
+        <ul id="results-achievements" class="achievement-list"></ul>
+        <p id="results-board" class="dim-line"></p>
+        <div class="row-actions">
+          <button id="btn-results-retry" class="btn" type="button">Retry</button>
+          <button id="btn-results-next" class="btn btn-primary" type="button">Next</button>
+          <button id="btn-results-menu" class="btn" type="button">Menu</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Help ============ -->
+    <section id="screen-help" class="screen" data-screen="help" hidden aria-labelledby="help-h">
+      <div class="panel center-panel wide-panel">
+        <h1 id="help-h">How to play</h1>
+        <div class="card-grid help-grid">
+          <div class="card card-static">
+            <span class="card-title">The idea</span>
+            <span class="card-desc">Tap an uncovered tile to lift it into your tray. Three identical symbols in the tray clear themselves. Empty the whole table to win.</span>
+          </div>
+          <div class="card card-static">
+            <span class="card-title">The tray</span>
+            <span class="card-desc">The tray holds seven tiles. If every slot is filled with no triple, the round is lost. Keep sets moving.</span>
+          </div>
+          <div class="card card-static">
+            <span class="card-title">Covered tiles</span>
+            <span class="card-desc">A tile under another is shadowed and cannot be picked. Clear the tiles above to free it.</span>
+          </div>
+          <div class="card card-static">
+            <span class="card-title">Combos</span>
+            <span class="card-desc">Clear triples within a few turns of each other to chain a combo bonus.</span>
+          </div>
+          <div class="card card-static">
+            <span class="card-title">Controls</span>
+            <span class="card-desc" id="help-controls">Tap or click a tile. Arrow keys move focus between available tiles, Enter picks, U undoes, H hints, C resets the camera, Esc pauses.</span>
+          </div>
+          <div class="card card-static">
+            <span class="card-title">Fair play</span>
+            <span class="card-desc">Every table is seeded and proven solvable. Ranked scores are verified by replaying your moves on the server.</span>
+          </div>
+        </div>
+        <button class="btn btn-back" type="button" data-nav="back">Back</button>
+      </div>
+    </section>
+
+    <!-- ============ Pause / settings overlay ============ -->
+    <div id="overlay-pause" class="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="pause-h">
+      <div class="panel overlay-panel">
+        <h1 id="pause-h">Paused</h1>
+        <button id="btn-resume" class="btn btn-primary" type="button">Resume</button>
+        <div class="row-actions">
+          <button id="btn-pause-help" class="btn" type="button">Help</button>
+          <button id="btn-leave" class="btn btn-danger" type="button">Leave round</button>
+        </div>
+
+        <details id="settings-details" class="settings" open>
+          <summary>Settings</summary>
+          <form id="settings-form" class="settings-form">
+            <fieldset>
+              <legend>Audio</legend>
+              <label>Music <input type="range" name="music" min="0" max="1" step="0.05"></label>
+              <label>Effects <input type="range" name="effects" min="0" max="1" step="0.05"></label>
+              <label>Ambience <input type="range" name="ambience" min="0" max="1" step="0.05"></label>
+              <label>Voice <input type="range" name="voice" min="0" max="1" step="0.05"></label>
+              <label><input type="checkbox" name="muted"> Mute all</label>
+              <label><input type="checkbox" name="captions"> Captions for sound cues</label>
+            </fieldset>
+            <fieldset>
+              <legend>Graphics</legend>
+              <label>Quality
+                <select name="graphicsTier">
+                  <option value="auto">Auto</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </label>
+              <label>Camera
+                <select name="cameraView">
+                  <option value="default">Default</option>
+                  <option value="top">Top-down</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+              <label>Table theme
+                <select name="themeChoice" id="settings-theme"></select>
+              </label>
+            </fieldset>
+            <fieldset>
+              <legend>Accessibility</legend>
+              <label><input type="checkbox" name="largerText"> Larger text</label>
+              <label><input type="checkbox" name="highContrast"> High contrast</label>
+              <label><input type="checkbox" name="reducedMotion"> Reduced motion</label>
+              <label>Symbol palette
+                <select name="colorblindPalette">
+                  <option value="default">Default</option>
+                  <option value="deuteranopia">Deuteranopia-safe</option>
+                  <option value="protanopia">Protanopia-safe</option>
+                  <option value="tritanopia">Tritanopia-safe</option>
+                </select>
+              </label>
+              <label><input type="checkbox" name="leftHanded"> Left-handed layout</label>
+              <label><input type="checkbox" name="holdToConfirm"> Hold to confirm picks</label>
+              <label><input type="checkbox" name="timingAssist"> Timing assistance (extends clocks)</label>
+              <label><input type="checkbox" name="haptics"> Haptics</label>
+              <label><input type="checkbox" name="telemetryConsent"> Share anonymous usage counters</label>
+              <button id="btn-replay-tutorial" class="btn" type="button">Replay tutorial</button>
+            </fieldset>
+          </form>
+        </details>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
