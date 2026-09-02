@@ -1,5 +1,13 @@
-<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='#1a2030'/>
-<rect x='8' y='22' width='15' height='26' rx='3' fill='#e8a84b' transform='rotate(-8 15 35)'/>
-<rect x='25' y='16' width='15' height='26' rx='3' fill='#7fb3d4'/>
-<rect x='42' y='22' width='15' height='26' rx='3' fill='#8fd6a0' transform='rotate(8 49 35)'/>
+<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>
+  <rect width='64' height='64' rx='13' fill='#241a12'/>
+  <g transform='rotate(-14 21 35)'>
+    <rect x='11' y='22' width='20' height='26' rx='4' fill='#e0a05a'/>
+    <path d='M21 29 L26 35 L21 41 L16 35 Z' fill='#241a12'/>
+  </g>
+  <g transform='rotate(14 43 35)'>
+    <rect x='33' y='22' width='20' height='26' rx='4' fill='#e0a05a'/>
+    <circle cx='43' cy='35' r='5' fill='#241a12'/>
+  </g>
+  <rect x='22' y='16' width='20' height='26' rx='4' fill='#f3e8d8'/>
+  <circle cx='32' cy='29' r='6.5' fill='none' stroke='#d05a4a' stroke-width='4'/>
 </svg>
