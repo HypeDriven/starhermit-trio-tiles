@@ -195,7 +195,13 @@ export class UI {
   updateHud(state, level) {
     this.el.hudProgress.textContent = `${state.tiles.length} tile${state.tiles.length === 1 ? '' : 's'}`;
     this.el.hudScore.textContent = String(state.score.total);
-    this.announce('score', `Score ${state.score.total}, ${state.tiles.length} tiles left, tray ${state.tray.length} of ${state.trayCapacity}`);
+    // The 250 ms clock re-enters here constantly; announce only real changes
+    // so screen readers are not spammed with identical score text.
+    const scoreMsg = `Score ${state.score.total}, ${state.tiles.length} tiles left, tray ${state.tray.length} of ${state.trayCapacity}`;
+    if (scoreMsg !== this._lastScoreMsg) {
+      this._lastScoreMsg = scoreMsg;
+      this.announce('score', scoreMsg);
+    }
     const hasClock = state.limits.timeLimitMs != null;
     this.el.hudTimer.hidden = !hasClock && !level?.parMs;
     if (hasClock) {

@@ -44,7 +44,7 @@ export class HostPlatform {
       const t1 = performance.now();
       const data = await res.json();
       const rtt = t1 - t0;
-      this.clockOffsetMs = data.epochMs - (Date.now() - rtt / 2) - (t1 - t0) / 2 + rtt / 2;
+      // Server stamp + half the round trip ≈ server time at response arrival.
       this.clockOffsetMs = data.epochMs + rtt / 2 - Date.now();
       this.online = true;
     } catch {

@@ -502,6 +502,10 @@ export class TeaScene {
     this.materialCache.clear();
     this.textureSets = buildTileTextures(this.level.symbolIds, this.theme, this.colorblindPalette);
     for (const [, rec] of this.tiles) {
+      if (rec.ownMaterial) {
+        rec.mesh.material.dispose();
+        rec.ownMaterial = false;
+      }
       rec.mesh.material = this._materialFor(rec.sym, rec.exposed);
     }
   }
@@ -853,19 +857,18 @@ export class TeaScene {
   _setTileLift(tileId, on) {
     const rec = this.tiles.get(tileId);
     if (!rec || rec.inTray || rec.cleared) return;
-    const mat = rec.mesh.material;
-    if (mat.emissive) {
-      mat.emissive.set(on ? 0x2a2410 : 0x000000);
-      // Note: materials are shared per symbol — clone on first lift.
-      if (on && !rec.ownMaterial) {
-        rec.mesh.material = mat.clone();
+    // Materials are shared per symbol: never mutate the shared instance.
+    // Give the hovered tile its own clone; restore the shared one on release.
+    if (on) {
+      if (!rec.ownMaterial) {
+        rec.mesh.material = rec.mesh.material.clone();
         rec.ownMaterial = true;
-        rec.mesh.material.emissive.set(0x2a2410);
-      } else if (!on && rec.ownMaterial) {
-        rec.mesh.material.dispose();
-        rec.mesh.material = this._materialFor(rec.sym, rec.exposed);
-        rec.ownMaterial = false;
       }
+      rec.mesh.material.emissive?.set(0x2a2410);
+    } else if (rec.ownMaterial) {
+      rec.mesh.material.dispose();
+      rec.mesh.material = this._materialFor(rec.sym, rec.exposed);
+      rec.ownMaterial = false;
     }
     this._tween(rec.mesh.position, { y: rec.home.y + (on ? 0.14 : 0) }, 0.12, EASE.outQuad);
   }

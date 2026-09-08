@@ -149,6 +149,40 @@ test('full-session golden path: win a practice round via solver hints', () => {
   assert.ok(['cleared', 'tray_full'].includes(s.state.terminalReason));
 });
 
+test('daily reconnect: replayed command log does not swallow new commands', () => {
+  const level = materializeLevel(dailyLevel(new Date(Date.UTC(2026, 8, 8))));
+  const a = new Session(level, { sessionId: 'resume-1' });
+  const la = legalActions(a.state);
+  a.submit({ type: 'select', tileId: la.selectable[0] });
+  a.submit({ type: 'tick', dt: 250 });
+  const log = a.commands.map((c) => ({ ...c }));
+
+  // Reconnect: fresh session with the same id replays the durable log.
+  const b = new Session(level, { sessionId: 'resume-1' });
+  for (const cmd of log) b.submit({ ...cmd, id: cmd.id });
+  b.syncCommandSeq();
+
+  const pick = legalActions(b.state).selectable.find((id) => id !== la.selectable[0]);
+  const r = b.submit({ type: 'select', tileId: pick });
+  assert.equal(r.ok, true, 'first live command after resume must not be a duplicate');
+  assert.notEqual(r.duplicate, true);
+  assert.equal(r.state.moves, b.state.moves);
+  assert.equal(b.state.moves, 2, 'the move was actually applied');
+  assert.equal(stateHash(b.state), stateHash(r.state));
+});
+
+test('daily reconnect without syncCommandSeq demonstrates the collision', () => {
+  const level = materializeLevel(dailyLevel(new Date(Date.UTC(2026, 8, 8))));
+  const a = new Session(level, { sessionId: 'resume-2' });
+  a.submit({ type: 'select', tileId: legalActions(a.state).selectable[0] });
+  const log = a.commands.map((c) => ({ ...c }));
+  const b = new Session(level, { sessionId: 'resume-2' });
+  for (const cmd of log) b.submit({ ...cmd, id: cmd.id });
+  const r = b.submit({ type: 'select', tileId: legalActions(b.state).selectable[1] });
+  assert.equal(r.duplicate, true, 'unsynced counter reissues an already-seen id');
+  assert.equal(b.state.moves, 1, 'the live move was swallowed');
+});
+
 test('daily envelope verifies against daily content', { timeout: 60000 }, () => {
   const level = materializeLevel(dailyLevel(new Date(Date.UTC(2026, 7, 16))));
   const s = new Session(level, { sessionId: 'daily-1' });

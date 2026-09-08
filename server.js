@@ -354,10 +354,22 @@ function publicEntry(e) {
 // ---------------------------------------------------------------------------
 
 function serveStatic(req, res, url) {
-  let path = decodeURIComponent(url.pathname);
+  let path;
+  try {
+    path = decodeURIComponent(url.pathname);
+  } catch {
+    res.writeHead(400);
+    return res.end('bad request');
+  }
   if (path === '/') path = '/index.html';
+  const rootResolved = resolve(ROOT);
   const file = normalize(join(ROOT, path));
-  if (!file.startsWith(resolve(ROOT)) || file.includes(`${resolve(ROOT)}/data`)) {
+  const rel = file.slice(rootResolved.length + 1);
+  const blocked =
+    (file !== rootResolved && !file.startsWith(rootResolved + '/')) || // sibling-prefix escape
+    rel.split('/').some((seg) => seg.startsWith('.')) || // VCS metadata / dotfiles
+    file.startsWith(join(rootResolved, 'data') + '/'); // durable stores
+  if (blocked) {
     res.writeHead(403);
     return res.end('forbidden');
   }

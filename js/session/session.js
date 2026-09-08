@@ -68,6 +68,19 @@ export class Session {
   }
 
   /**
+   * Advance the command-id counter past every already-seen auto-generated id.
+   * Must be called after re-submitting a recorded command log (daily
+   * reconnect), or the next live commands would reuse ids like `<sid>:c1`
+   * and be silently rejected as duplicates.
+   */
+  syncCommandSeq() {
+    for (const id of this.seenCommandIds) {
+      const m = /:c(\d+)$/.exec(id);
+      if (m) this.commandSeq = Math.max(this.commandSeq, Number(m[1]));
+    }
+  }
+
+  /**
    * Submit a command. Duplicate command ids are rejected idempotently.
    * Returns { ok, reason?, events, state }.
    */

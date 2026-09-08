@@ -227,6 +227,21 @@ test('tie-breaks: completion, invalid count, elapsed, session id', () => {
   assert.ok(compareResults(mk({ sessionId: 'a' }), mk({ sessionId: 'b' })) < 0);
 });
 
+test('tie-breaks: integer scores (leaderboard entry shape) order by score', () => {
+  // Server board entries store score as a plain integer, not { total }.
+  const mk = (over) => ({
+    status: 'won',
+    score: 1000,
+    invalidCount: 0,
+    elapsedMs: 60000,
+    sessionId: 'a',
+    ...over,
+  });
+  assert.ok(compareResults(mk({ score: 1200 }), mk({ score: 800 })) < 0, 'higher integer score ranks first');
+  assert.ok(compareResults(mk({ score: 800 }), mk({ score: 1200 })) > 0);
+  assert.ok(compareResults(mk({}), mk({ status: 'lost', score: 99999 })) < 0, 'completion still outranks score');
+});
+
 test('legalActions is the single source of truth for legality', () => {
   const s = game({ assists: { undo: true, hint: true } });
   const la = legalActions(s);

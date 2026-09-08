@@ -412,7 +412,10 @@ export function compareResults(a, b) {
   const completeA = a.status === 'won' ? 1 : 0;
   const completeB = b.status === 'won' ? 1 : 0;
   if (completeA !== completeB) return completeB - completeA;
-  if (a.score.total !== b.score.total) return b.score.total - a.score.total;
+  // Accepts both result records (score: integer) and raw states (score.total).
+  const scoreA = typeof a.score === 'number' ? a.score : (a.score?.total ?? 0);
+  const scoreB = typeof b.score === 'number' ? b.score : (b.score?.total ?? 0);
+  if (scoreA !== scoreB) return scoreB - scoreA;
   if (a.invalidCount !== b.invalidCount) return a.invalidCount - b.invalidCount;
   if (a.elapsedMs !== b.elapsedMs) return a.elapsedMs - b.elapsedMs;
   return String(a.sessionId ?? '').localeCompare(String(b.sessionId ?? ''));

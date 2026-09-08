@@ -418,10 +418,18 @@ class App {
     });
     // Reconnect: replay the durable daily snapshot through the same commands.
     if (snapshot?.commands?.length) {
-      try {
-        for (const cmd of snapshot.commands) this.session.submit({ ...cmd, id: cmd.id });
+      let replayOk = true;
+      for (const cmd of snapshot.commands) {
+        const r = this.session.submit({ ...cmd, id: cmd.id });
+        if (!r.ok && !r.duplicate && r.reason !== 'not_active') {
+          replayOk = false;
+          break;
+        }
+      }
+      if (replayOk) {
+        this.session.syncCommandSeq(); // avoid id collisions with the replayed log
         this.ui.caption('Restored your daily table from the server');
-      } catch {
+      } else {
         this.session = new Session(level, { assists: { timingAssist: s.timingAssist } });
       }
     }
@@ -496,11 +504,17 @@ class App {
       this.audio.playEvent(ev);
       if (ev.type === 'pick' && this.store.settings.haptics && navigator.vibrate) navigator.vibrate(8);
     }
-    this.scene.applyEvents(events, this.session.state);
+    // Tick-only submissions (the 250 ms clock) never change the board: skip
+    // the scene reconcile (a full exposure pass) and the mirror/assist DOM
+    // rebuild so keyboard/screen-reader focus is not destroyed 4×/s.
+    const boardChanged = events.some((ev) => ev.type !== 'tick');
+    if (boardChanged) {
+      this.scene.applyEvents(events, this.session.state);
+      this._refreshMirror();
+      this._refreshAssists();
+    }
     this.audio.setIntensity(this.session.state.tray.length / this.session.state.trayCapacity);
     this.ui.updateHud(this.session.state, this.round.level);
-    this._refreshMirror();
-    this._refreshAssists();
     this._tutorialAdvance(events, tileId);
     this._saveDailySnapshot();
     if (this.session.finished) this._resolveRound();
@@ -553,6 +567,8 @@ class App {
   // -------------------------------------------------------------------------
 
   async _resolveRound() {
+    const completedSession = this.session;
+    this._saveDailySnapshot(true);
     this._setPhase('resolving');
     this._stopClock();
     this.host.activityEnd();
@@ -590,6 +606,7 @@ class App {
 
     // Brief beat so the win/lose scene animation lands before the panel.
     setTimeout(() => {
+      if (this.session !== completedSession || this.phase !== 'resolving') return; // user navigated away mid-beat
       this._setPhase('results');
       this.ui.results({
         won,
@@ -600,7 +617,6 @@ class App {
         boardLine,
         nextLabel: mode === 'journey' && won ? 'Next stage' : 'Continue',
       });
-      this._saveDailySnapshot(true);
     }, won ? 1200 : 700);
   }
 
@@ -684,17 +700,25 @@ class App {
   // -------------------------------------------------------------------------
 
   _saveDailySnapshot(finished = false) {
-    if (this.round?.mode !== 'daily' || !this.host.online) return;
-    const level = this.round.level;
-    const commands = this.session.commands;
-    const sessionId = this.session.sessionId;
-    const done = finished || this.session.finished;
-    clearTimeout(this._snapshotTimer);
+    if (this.round?.mode !== 'daily' || !this.host.online || !this.session) return;
+    // Throttle, not debounce: the 250 ms simulation tick re-enters here four
+    // times a second, so a resettable debounce would be postponed forever and
+    // the snapshot would never reach the server while the round is active.
+    if (this._snapshotTimer) return;
+    const round = this.round;
+    const session = this.session;
     this._snapshotTimer = setTimeout(() => {
+      this._snapshotTimer = null;
+      const done = finished || session.finished;
       fetch('/api/v1/daily/session', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-player-id': this.host.playerId },
-        body: JSON.stringify({ day: level.day, sessionId, commands, finished: done }),
+        body: JSON.stringify({
+          day: round.level.day,
+          sessionId: session.sessionId,
+          commands: session.commands,
+          finished: done,
+        }),
       }).catch(() => {});
     }, 800);
   }
@@ -856,6 +880,12 @@ class App {
     }
     if (this.phase !== 'active' || this.ui.isPauseOpen()) return;
 
+    // A focused DOM control (mirror button, summary, link) keeps its native
+    // Enter/Space activation; the canvas-level shortcuts only apply when the
+    // body/canvas itself has focus.
+    const el = document.activeElement;
+    const onControl = /^(BUTTON|A|SUMMARY)$/.test(el?.tagName ?? '');
+
     switch (e.key) {
       case 'ArrowLeft':
       case 'ArrowRight':
@@ -866,6 +896,7 @@ class App {
         break;
       case 'Enter':
       case ' ':
+        if (onControl) break;
         e.preventDefault();
         this._confirmFocus();
         break;
