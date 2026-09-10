@@ -1,6 +1,6 @@
 # Trio Tiles — Product and Game Specification
 
-**Document status:** design specification only; no implementation is included.  
+**Document status:** running design document. The game is implemented and shipping; this spec describes both the intended design and the behavior of the code in this repository. Where the two diverge, the code is authoritative and this document is updated to match.
 **Game index:** 4  
 **Genre:** Selection puzzle  
 **Players:** 1 player; optional asynchronous score comparison  
@@ -256,6 +256,6 @@ Success targets for the first public test: median first-play time under 20 secon
 
 ## 10. Definition of done and non-goals
 
-This specification is ready for implementation when rules examples, content schema, wireframes for all responsive breakpoints, visual target frames, accessibility annotations, authoritative message schema, achievement definitions, leaderboard definitions, and performance test devices are approved.
+This specification describes the shipped game. Ongoing acceptance is covered by the automated checks in `tests/` (rules, replay determinism, content validation, fuzz, and desktop/mobile e2e via Playwright) plus the asset audit tooling.
 
-This document does **not** authorize implementation, asset production, monetization work, native wrappers, real-money systems, or copying any existing product. The initial build should favor one excellent core loop and a coherent original visual identity over feature breadth.
+Non-goals remain unchanged: no monetization work, no native wrappers, no real-money systems, and no copying of any existing product. Future changes favor one excellent core loop and a coherent original visual identity over feature breadth.
