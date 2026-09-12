@@ -66,7 +66,10 @@ export function createTableGeometry(radiusX = 6.4, radiusZ = 4.6, thick = 0.5) {
     curveSegments: 12,
   });
   geo.rotateX(-Math.PI / 2);
-  geo.translate(0, -0.06, 0);
+  // After the rotation the extrusion (plus its top bevel) spans y = 0 …
+  // thick + bevel. Every gameplay mesh (tiles, tray, rings) sits at y ≈ 0, so
+  // the slab's top surface must be at y = 0 — otherwise the tiles are buried.
+  geo.translate(0, -(thick + 0.12), 0);
   return geo;
 }
 

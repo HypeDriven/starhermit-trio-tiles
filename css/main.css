@@ -249,6 +249,7 @@ button.card:hover { background: #3a2a1c; border-color: var(--accent); }
 
 .tutorial-banner {
   align-self: center;
+  margin-bottom: auto; /* hug the top HUD instead of floating over the tiles */
   max-width: 34rem;
   background: var(--panel);
   border: 1px solid var(--accent);
@@ -439,7 +440,7 @@ body.left-handed .hud-bottom { align-items: center; }
   .hud-bottom {
     position: absolute;
     right: calc(0.4rem + var(--sar));
-    top: 20%;
+    top: 4rem; /* below the status pills, never over them */
     bottom: calc(0.4rem + var(--sab));
     flex-direction: column;
     justify-content: flex-end;
@@ -447,9 +448,16 @@ body.left-handed .hud-bottom { align-items: center; }
     width: 9rem;
   }
   .hud-actions { flex-direction: column; }
-  .hud-actions .btn { width: 100%; margin: 4px 0; }
-  .tray-gauge { flex-wrap: wrap; justify-content: center; }
-  .board-mirror { display: none; }
+  .hud-actions .btn { width: 100%; margin: 4px 0; min-height: 40px; padding: 0.3em 0.6em; }
+  .tray-gauge { flex-wrap: wrap; justify-content: center; gap: 4px; }
+  .tray-slot { width: 1.6em; height: 1.6em; }
+  .tutorial-banner { max-width: min(30rem, 60vw); font-size: 0.9em; padding: 0.4rem 0.8rem; margin-top: 0.2rem; }
+  /* the mirror stays reachable as a bottom-left drawer */
+  .board-mirror {
+    position: absolute; top: auto; right: auto;
+    left: calc(0.4rem + var(--sal)); bottom: calc(0.4rem + var(--sab));
+    max-width: 40vw; max-height: 50vh; overflow-y: auto;
+  }
 }
 
 /* ---------- high contrast & reduced motion ---------- */
