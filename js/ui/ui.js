@@ -28,6 +28,7 @@ export class UI {
       titleName: $('btn-profile-name'),
       titleOnline: $('title-online'),
       titleOffline: $('title-offline'),
+      titleSync: $('title-sync'),
       titleProgress: $('title-progress'),
       journeyMeta: $('mode-journey-meta'),
       dailyMeta: $('mode-daily-meta'),
@@ -132,10 +133,12 @@ export class UI {
     this.el.bootStatus.textContent = text;
   }
 
-  setTitleInfo({ name, online, progressText }) {
+  setTitleInfo({ name, online, sync, progressText }) {
     this.el.titleName.textContent = name;
     this.el.titleOnline.hidden = !online;
     this.el.titleOffline.hidden = online;
+    this.el.titleSync.hidden = !sync;
+    this.el.titleSync.textContent = sync ?? '';
     this.el.titleProgress.textContent = progressText;
   }
 

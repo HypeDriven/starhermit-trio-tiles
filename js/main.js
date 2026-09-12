@@ -94,6 +94,9 @@ class App {
 
     this.ui.boot(4, 4, 'Contacting the host…');
     this.host.setTelemetryConsent(!!this.store.settings.telemetryConsent);
+    this.host.onSyncChange = () => {
+      if (this.phase === 'title') this._refreshTitle();
+    };
     try {
       await this.host.init();
     } catch {
@@ -115,8 +118,9 @@ class App {
     const p = this.store.doc.progression;
     const journeyDone = Object.values(p.journey).filter((s) => s.stars > 0).length;
     this.ui.setTitleInfo({
-      name: this.store.doc.profile.displayName,
+      name: this.host.profileName(),
       online: this.host.online,
+      sync: this.host.syncLabel(),
       progressText:
         p.roundsPlayed > 0
           ? `Journey ${journeyDone}/${JOURNEY.length} · ${p.roundsWon} tables cleared · daily streak ${this.store.doc.daily.streak}`
@@ -185,6 +189,10 @@ class App {
   }
 
   _renameProfile() {
+    if (this.host.scope.hosted) {
+      this.ui.caption('Hosted play shows your StarHermit account name.');
+      return;
+    }
     const name = prompt('Display name (stored locally):', this.store.doc.profile.displayName);
     if (!name) return;
     this.store.doc.profile.displayName = name.replace(/[<>"]/g, '').trim().slice(0, 24) || 'Guest';
@@ -292,18 +300,9 @@ class App {
       });
     }
     let resumeItem = null;
-    try {
-      const res = await fetch(`/api/v1/daily/session?day=${local.day}`, {
-        headers: { 'x-player-id': this.host.playerId },
-      });
-      if (res.ok) {
-        const snap = await res.json();
-        if (!snap.finished && snap.commands?.length > 0) {
-          resumeItem = { id: 'daily:resume', label: 'Resume today’s table', meta: `${snap.commands.length} commands recorded` };
-        }
-      }
-    } catch {
-      /* offline — no durable session */
+    const snap = await this.host.dailySessionFetch(local.day);
+    if (snap && !snap.finished && snap.commands?.length > 0) {
+      resumeItem = { id: 'daily:resume', label: 'Resume today’s table', meta: `${snap.commands.length} commands recorded` };
     }
     const items = [];
     if (resumeItem) items.push(resumeItem);
@@ -322,7 +321,9 @@ class App {
   async _boardsSetup(friends) {
     this.ui.renderSetup({
       title: 'Score Chase',
-      blurb: 'Validated scores only: every entry was replay-verified by the server. Offline? Your local bests stand in.',
+      blurb: this.host.scope.hosted
+        ? 'The global board is platform-owned and read-only here; your local bests are always kept alongside.'
+        : 'Validated scores only: every entry was replay-verified by the server. Offline? Your local bests stand in.',
       groups: [
         {
           items: [
@@ -339,21 +340,39 @@ class App {
 
   async _showBoard(board) {
     const data = await this.host.leaderboard(board, { friends: !!this._boardFriends, limit: 20 });
-    const rows = data.entries
-      .map(
-        (e, i) =>
-          `<tr><td>${e.rank ?? i + 1}</td><td>${escapeHtml(e.name ?? 'Guest')}</td><td>${escapeHtml(
-            e.contentId ?? '',
-          )}</td><td>${e.score}</td><td>${fmtMs(e.elapsedMs ?? 0)}</td></tr>`,
-      )
-      .join('');
-    const source =
-      data.source === 'local' ? 'Local bests (offline)' : data.casual ? 'Casual board' : 'Verified board';
-    document.getElementById('setup-extra').innerHTML = `
-      <h2>${board[0].toUpperCase() + board.slice(1)} — ${source}</h2>
-      <label><input type="checkbox" id="board-friends" ${this._boardFriends ? 'checked' : ''}> Friends / my entries only</label>
-      <table class="score-table"><thead><tr><th>#</th><th>Player</th><th>Table</th><th>Score</th><th>Time</th></tr></thead>
+    const row = (e, i) =>
+      `<tr><td>${e.rank ?? i + 1}</td><td>${escapeHtml(e.name ?? 'Guest')}</td><td>${escapeHtml(
+        e.contentId ?? e.day ?? '',
+      )}</td><td>${e.score}</td><td>${fmtMs(e.elapsedMs ?? 0)}</td></tr>`;
+    const checkbox = `<label><input type="checkbox" id="board-friends" ${this._boardFriends ? 'checked' : ''}> Friends / my entries only</label>`;
+    const table = (rows) =>
+      `<table class="score-table"><thead><tr><th>#</th><th>Player</th><th>Table</th><th>Score</th><th>Time</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="5">No entries yet.</td></tr>'}</tbody></table>`;
+    let html;
+    if (this.host.scope.hosted) {
+      // Platform leaderboard is read-only; local bests ride along.
+      const meLine =
+        data.me?.rank != null ? `<p class="dim-line">Your platform rank: ${escapeHtml(String(data.me.rank))}.</p>` : '';
+      const global = data.entries.length
+        ? `<h3>Global — platform board</h3>${table(data.entries.map(row).join(''))}${meLine}`
+        : '<p class="dim-line">Global board is empty or unavailable — the platform records ranked results server-side.</p>';
+      const localRows = data.local.map((e, i) => row({ ...e, rank: i + 1 }, i)).join('');
+      html = `
+        <h2>${board[0].toUpperCase() + board.slice(1)}</h2>
+        ${global}
+        <h3>Your local bests</h3>
+        ${checkbox}
+        ${table(localRows)}`;
+    } else {
+      const rows = data.entries.map(row).join('');
+      const source =
+        data.source === 'local' ? 'Local bests (offline)' : data.casual ? 'Casual board' : 'Verified board';
+      html = `
+        <h2>${board[0].toUpperCase() + board.slice(1)} — ${source}</h2>
+        ${checkbox}
+        ${table(rows)}`;
+    }
+    document.getElementById('setup-extra').innerHTML = html;
     document.getElementById('board-friends')?.addEventListener('change', (e) => {
       this._boardFriends = e.target.checked;
       this._showBoard(board);
@@ -389,16 +408,7 @@ class App {
   async _startDaily(resume) {
     const local = dailyLevel(todayUTC(this.host.now()));
     let snapshot = null;
-    if (resume) {
-      try {
-        const res = await fetch(`/api/v1/daily/session?day=${local.day}`, {
-          headers: { 'x-player-id': this.host.playerId },
-        });
-        if (res.ok) snapshot = await res.json();
-      } catch {
-        /* offline */
-      }
-    }
+    if (resume) snapshot = await this.host.dailySessionFetch(local.day);
     this._startRound(local, 'daily', null, snapshot);
   }
 
@@ -588,15 +598,12 @@ class App {
     const unlocked = this._checkAchievements();
     this.host.track('round_end', { mode, status: result.status });
 
-    // Ranked submission with replay envelope (server re-runs the input log).
-    let boardLine = mode === 'practice' || mode === 'learn' ? 'Unranked round — not submitted.' : '';
-    if (level.config.ranked) {
-      const board = mode === 'daily' ? 'daily' : mode === 'challenge' ? 'challenge' : 'journey';
-      const sub = await this.host.submitScore(board, { level, result, envelope: this.session.envelope() });
-      if (sub.ok) boardLine = sub.duplicate ? 'Score already recorded.' : `Submitted to the ${board} board — rank ${sub.rank}.`;
-      else if (sub.queued) boardLine = 'Offline — the score is queued and will submit on the next connection.';
-      else boardLine = `Score rejected: ${sub.error}`;
-    }
+    // Ranked boards are platform-owned: clients never submit scores. The
+    // local best is recorded above; the global board is viewed in Score Chase.
+    const boardLine =
+      mode === 'practice' || mode === 'learn'
+        ? 'Unranked round — local best recorded.'
+        : 'Local best recorded — global boards are recorded by the platform (see Score Chase).';
 
     const breakdown = scoreBreakdown(state);
     const stars = won && level.star ? starsFor(result.score, level.star) : 0;
@@ -710,16 +717,12 @@ class App {
     this._snapshotTimer = setTimeout(() => {
       this._snapshotTimer = null;
       const done = finished || session.finished;
-      fetch('/api/v1/daily/session', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-player-id': this.host.playerId },
-        body: JSON.stringify({
-          day: round.level.day,
-          sessionId: session.sessionId,
-          commands: session.commands,
-          finished: done,
-        }),
-      }).catch(() => {});
+      this.host.dailySessionSave({
+        day: round.level.day,
+        sessionId: session.sessionId,
+        commands: session.commands,
+        finished: done,
+      });
     }, 800);
   }
 

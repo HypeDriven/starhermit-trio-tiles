@@ -9,7 +9,6 @@ import { fnv1a } from '../rules/rng.js';
 
 export const SAVE_VERSION = 1;
 const SAVE_KEY = 'trio-tiles/save';
-const OUTBOX_KEY = 'trio-tiles/outbox';
 
 export const DEFAULT_SETTINGS = Object.freeze({
   music: 0.7,
@@ -270,36 +269,6 @@ export class SaveStore {
     if ((pa.tilesClearedTotal ?? 0) < (pb.tilesClearedTotal ?? 0)) return false;
     if ((pa.tilesClearedTotal ?? 0) > (pb.tilesClearedTotal ?? 0)) ahead = true;
     return ahead;
-  }
-
-  // --- Outbox: scores/actions queued while offline, flushed on next boot ---
-
-  queueOutbox(item) {
-    const list = this._readOutbox();
-    list.push({ ...item, queuedAt: Date.now(), id: fnv1a(JSON.stringify(item) + Date.now()).toString(36) });
-    try {
-      this.storage?.setItem(OUTBOX_KEY, JSON.stringify(list.slice(-100)));
-    } catch {
-      /* ignore */
-    }
-  }
-
-  _readOutbox() {
-    try {
-      return JSON.parse(this.storage?.getItem(OUTBOX_KEY) ?? '[]');
-    } catch {
-      return [];
-    }
-  }
-
-  drainOutbox() {
-    const list = this._readOutbox();
-    try {
-      this.storage?.removeItem(OUTBOX_KEY);
-    } catch {
-      /* ignore */
-    }
-    return list;
   }
 }
 
