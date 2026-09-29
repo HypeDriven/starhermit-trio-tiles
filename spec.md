@@ -266,3 +266,7 @@ Success targets for the first public test: median first-play time under 20 secon
 This specification describes the shipped game. Ongoing acceptance is covered by the automated checks in `tests/` (rules, replay determinism, content validation, fuzz, and desktop/mobile e2e via Playwright) plus the asset audit tooling.
 
 Non-goals remain unchanged: no monetization work, no native wrappers, no real-money systems, and no copying of any existing product. Future changes favor one excellent core loop and a coherent original visual identity over feature breadth.
+
+## Browser interference
+
+`browser-guard.js` (loaded from `index.html`) suppresses browser UI that gets in the way of play: the right-click context menu, the iOS long-press callout, copy / cut / paste, and page text selection. Text fields (inputs, textareas, selects, contenteditable) keep normal selection, context menu and clipboard behaviour.
