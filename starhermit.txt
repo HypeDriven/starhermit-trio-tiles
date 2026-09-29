@@ -1,4 +1,5 @@
 name=Trio Tiles
+description=Select exposed tiles into a seven-slot tray, matching three identical symbols to clear them before the tray fills.
 launch=index.html
 owner=2712e04e-461b-4d23-81ae-e40b429128a8
 server=server.js
