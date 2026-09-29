@@ -233,6 +233,79 @@ async function tapWinningTile(page, { touch }) {
 }
 
 // ---------------------------------------------------------------------------
+// Graphics settings: Settings → Graphics, switch presets, override one
+// category, confirm it applies live and survives a reload.
+// ---------------------------------------------------------------------------
+
+const presetIs = (page, p) =>
+  page.waitForFunction((v) => document.body.dataset.gfxPreset === v && document.getElementById('game-canvas').dataset.gfxPreset === v, p, { timeout: 15000 });
+
+async function press(page, sel, touch) {
+  const el = page.locator(sel);
+  await el.scrollIntoViewIfNeeded();
+  if (touch) await el.tap();
+  else await el.click();
+}
+
+async function openSettings(page, touch) {
+  await press(page, '#btn-title-settings', touch);
+  await page.waitForFunction(() => !document.getElementById('overlay-pause').hidden, null, { timeout: 8000 });
+  await page.locator('#gfx-section').scrollIntoViewIfNeeded();
+  if (!(await page.locator('#gfx-preset').isVisible())) throw new Error('Graphics section not visible');
+}
+
+async function graphicsCheck(page, name, touch) {
+  await openSettings(page, touch);
+  const autoLabel = await page.locator('#gfx-preset option[value="auto"]').textContent();
+  if (!/Auto \(detected: \w+\)/.test(autoLabel)) throw new Error(`unexpected Auto label "${autoLabel}"`);
+
+  await page.selectOption('#gfx-preset', 'low');
+  await presetIs(page, 'low');
+  await page.waitForFunction(() => /no shadows/.test(document.getElementById('gfx-summary').textContent));
+  await page.selectOption('#gfx-preset', 'high');
+  await presetIs(page, 'high');
+  await page.waitForFunction(() => /2048² shadows/.test(document.getElementById('gfx-summary').textContent));
+  const shadowOpt = await page.locator('#gfx-cat-shadows option[value="preset"]').textContent();
+  if (shadowOpt.trim() !== 'From preset (Medium)') throw new Error(`unexpected preset label "${shadowOpt}"`);
+  ok(`${name}: Graphics preset switched Low → High (summary + data-gfx-preset follow)`);
+
+  // One per-category override, applied live.
+  await page.selectOption('#gfx-cat-shadows', 'high');
+  await page.waitForFunction(() => /4096² shadows/.test(document.getElementById('gfx-summary').textContent));
+  // Frame-rate readout toggle through the real checkbox.
+  await press(page, '#gfx-fps', touch);
+  await page.waitForSelector('#fps-meter', { state: 'visible', timeout: 8000 });
+  await page.locator('#gfx-summary').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: SHOT('graphics', name) });
+  await press(page, '#gfx-fps', touch);
+  await page.waitForSelector('#fps-meter', { state: 'hidden', timeout: 8000 });
+  await press(page, '#btn-resume', touch);
+  ok(`${name}: shadows override + frame-rate toggle applied live`);
+
+  // Survives reload.
+  await page.reload({ waitUntil: 'load' });
+  await screenVisible(page, 'title');
+  await presetIs(page, 'high');
+  await openSettings(page, touch);
+  const v = await page.evaluate(() => ({
+    preset: document.getElementById('gfx-preset').value,
+    shadows: document.getElementById('gfx-cat-shadows').value,
+    summary: document.getElementById('gfx-summary').textContent,
+  }));
+  if (v.preset !== 'high' || v.shadows !== 'high' || !/4096² shadows/.test(v.summary)) {
+    throw new Error(`graphics settings not persisted: ${JSON.stringify(v)}`);
+  }
+  ok(`${name}: Graphics settings persisted across reload`);
+
+  // Choosing a preset clears overrides; back to Auto keeps the rest of the run fast.
+  await page.selectOption('#gfx-preset', 'auto');
+  await page.waitForFunction(() => document.getElementById('gfx-cat-shadows').value === 'preset');
+  await press(page, '#btn-resume', touch);
+  await page.waitForFunction(() => document.getElementById('overlay-pause').hidden, null, { timeout: 8000 });
+  ok(`${name}: preset change cleared overrides (back to Auto)`);
+}
+
+// ---------------------------------------------------------------------------
 // One full pass
 // ---------------------------------------------------------------------------
 
@@ -242,19 +315,25 @@ async function runPass(browser, name, ctxOpts, { full }) {
   const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => {
-    if (m.type() !== 'error' || browserNoise.test(m.text())) return;
+    if ((m.type() !== 'error' && m.type() !== 'warning') || browserNoise.test(m.text())) return;
     const url = m.location()?.url || '';
     if (/Failed to load resource/.test(m.text()) && /\/api\/|\/favicon/.test(url)) return;
-    errors.push(`console: ${m.text()}`);
+    errors.push(`console ${m.type()}: ${m.text()}`);
   });
   page.on('response', (r) => {
     const p = r.url();
     if (r.status() >= 400 && !/\/api\/|\/favicon/.test(p)) errors.push(`http ${r.status()}: ${p}`);
   });
 
-  // Fresh storage each pass so the journey stage starts unlocked and clean.
+  // Fresh storage each pass so the journey stage starts unlocked and clean
+  // (only on the first load: the Graphics check reloads to verify persistence).
   await page.addInitScript(() => {
-    try { localStorage.clear(); } catch {}
+    try {
+      if (!sessionStorage.getItem('e2e-fresh')) {
+        localStorage.clear();
+        sessionStorage.setItem('e2e-fresh', '1');
+      }
+    } catch {}
   });
   resetReplica();
 
@@ -266,6 +345,8 @@ async function runPass(browser, name, ctxOpts, { full }) {
     if (title !== 'Trio Tiles') throw new Error(`unexpected title: "${title}"`);
     await page.screenshot({ path: SHOT('title', name) });
     ok(`${name}: title screen visible ("${title}")`);
+
+    await graphicsCheck(page, name, ctxOpts.hasTouch);
 
     // Play → Journey card → stage 1
     await page.click('#btn-play');
@@ -370,7 +451,7 @@ let browser = null;
 try {
   browser = await chromium.launch({
     executablePath: '/usr/bin/google-chrome',
-    args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--mute-audio'],
+    args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio'],
   });
   console.log(`serving ${ROOT} for ${levelId} at ${BASE}`);
   await runPass(browser, 'desktop', { viewport: { width: 1280, height: 800 } }, { full: true });

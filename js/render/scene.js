@@ -29,14 +29,61 @@ import {
   TILE_THICK,
   LAYER_HEIGHT,
 } from './geometry.js';
-import { buildTileTextures, buildWoodTexture, buildSoftCircleTexture, buildPetalTexture, disposeTextureSets } from './materials.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import {
+  buildTileTextures,
+  buildWoodTexture,
+  buildSoftCircleTexture,
+  buildPetalTexture,
+  buildGrainTexture,
+  disposeTextureSets,
+} from './materials.js';
 import { CameraRig, CAMERA_ANCHORS } from './camera.js';
-import { TIERS } from './quality.js';
+import { detectPreset, resolve, describe, SHADOW_MAP, PARTICLES } from './gfx.js';
 
 const LAYER_ENV = 0;
 const LAYER_GAME = 1;
 const LAYER_SELECT = 2;
 const LAYER_FX = 3;
+
+// Pools are allocated once at the largest tier; tiers only change draw counts.
+const MAX_PETALS = PARTICLES.high.petals;
+const MAX_MIST = PARTICLES.high.mist;
+const MAX_STEAM = PARTICLES.high.steam;
+const MAX_BURST = 140;
+const MAX_ISLANDS = 6;
+const STEAM_ORIGIN = new THREE.Vector3(-3.42, 0.95, -2.2); // teapot spout tip
+
+// Warm tea-house grade: gentle S-curve, a touch more saturation, warm
+// highlights / cool shadows, and a soft vignette that never reaches the board.
+const GradeShader = {
+  uniforms: { tDiffuse: { value: null }, uAmount: { value: 1.0 }, uVignette: { value: 0.24 } },
+  vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float uAmount; uniform float uVignette;
+    varying vec2 vUv;
+    void main() {
+      vec4 src = texture2D(tDiffuse, vUv);
+      vec3 c = src.rgb;
+      vec3 lc = clamp(c, 0.0, 1.0);
+      vec3 s = mix(lc, lc * lc * (3.0 - 2.0 * lc), 0.18);
+      float l = dot(s, vec3(0.299, 0.587, 0.114));
+      s = mix(vec3(l), s, 1.07);
+      s *= mix(vec3(0.97, 0.99, 1.04), vec3(1.03, 1.0, 0.97), smoothstep(0.2, 0.8, l));
+      c = mix(c, s + max(c - 1.0, 0.0), uAmount);
+      float d = length((vUv - 0.5) * vec2(1.1, 1.0));
+      c *= 1.0 - uVignette * smoothstep(0.42, 0.9, d);
+      gl_FragColor = vec4(c, src.a);
+    }`,
+};
 
 const EASE = {
   outCubic: (t) => 1 - Math.pow(1 - t, 3),
@@ -48,15 +95,28 @@ const EASE = {
 export class TeaScene {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {object} opts { tier, reducedMotion, colorblindPalette, onContextLost }
+   * @param {object} opts { graphics, reducedMotion, colorblindPalette, onContextLost }
+   *   graphics: saved Graphics settings ({} = Auto), see gfx.js resolve().
    */
   constructor(canvas, opts = {}) {
     this.canvas = canvas;
     this.reducedMotion = !!opts.reducedMotion;
     this.colorblindPalette = opts.colorblindPalette ?? 'default';
-    this.tier = TIERS[opts.tier] ?? TIERS.medium;
+    this.gfxSaved = opts.graphics ?? {};
     this.onContextLost = opts.onContextLost ?? (() => {});
-    this.renderScaleFactor = 1;
+    this.adaptiveScale = 1;
+    this.pixelRatio = 1;
+    this.size = [0, 0];
+    this._frames = [];
+    this.fps = 0;
+    this.composer = null;
+    this.postKey = null;
+    this.postFailed = false;
+    try {
+      this._prefersReduced = window.matchMedia?.('(prefers-reduced-motion: reduce)') ?? null;
+    } catch {
+      this._prefersReduced = null;
+    }
 
     this.theme = THEMES.dawn;
     this.tiles = new Map(); // tileId -> {mesh, home, sym}
@@ -84,18 +144,23 @@ export class TeaScene {
   // -------------------------------------------------------------------------
 
   _initGL() {
+    // Canvas MSAA is off: multisampling (when chosen) happens in the post
+    // chain's render target so it can be switched live without a new context.
     const r = new THREE.WebGLRenderer({
       canvas: this.canvas,
-      antialias: this.tier.antialias,
+      antialias: false,
       powerPreference: 'high-performance',
       stencil: false,
     });
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 1.0;
-    r.shadowMap.enabled = this.tier.shadows;
+    r.shadowMap.enabled = false;
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer = r;
+    this.gpu = readGpuName(r);
+    this.detected = detectPreset(this.gpu, { mobile: isTouchDevice() });
+    this.q = resolve(this.gfxSaved, this.detected);
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.1, 200);
@@ -108,14 +173,13 @@ export class TeaScene {
     // Lights: one dominant warm key, soft sky fill, gentle ambient.
     this.keyLight = new THREE.DirectionalLight(0xffe3c0, 2.6);
     this.keyLight.position.set(6, 10, 4);
-    this.keyLight.castShadow = this.tier.shadows;
-    if (this.tier.shadows) {
-      this.keyLight.shadow.mapSize.setScalar(this.tier.shadowMapSize);
-      const s = 8;
-      Object.assign(this.keyLight.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 2, far: 30 });
-      this.keyLight.shadow.bias = -0.0004;
-    }
+    this.keyLight.castShadow = false;
+    this.keyLight.shadow.bias = -0.0004;
+    this.keyLight.shadow.normalBias = 0.02;
+    this.keyLight.shadow.radius = 3;
+    this._fitShadowFrustum();
     this.scene.add(this.keyLight);
+    this.keyBase = this.keyLight.intensity;
     this.fillLight = new THREE.HemisphereLight(0x88a0b9, 0x3a2e28, 0.55);
     this.scene.add(this.fillLight);
     this.ambient = new THREE.AmbientLight(0xffffff, 0.12);
@@ -138,8 +202,211 @@ export class TeaScene {
 
     // Precompile every material variant before first play (no mid-round
     // shader compilation hitches).
+    this._applyGraphics();
     this.renderer.compile(this.scene, this.camera);
     this.resize();
+  }
+
+  /** Fit the key light's orthographic shadow camera tightly around the table + tray + props. */
+  _fitShadowFrustum() {
+    const light = this.keyLight;
+    const dir = light.position.clone().normalize();
+    light.target.position.set(0, 0, 0);
+    light.position.copy(dir.clone().multiplyScalar(14));
+    light.updateMatrixWorld();
+    light.target.updateMatrixWorld();
+    const view = new THREE.Matrix4().lookAt(light.position, light.target.position, new THREE.Vector3(0, 1, 0));
+    view.setPosition(light.position);
+    const inv = view.clone().invert();
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    const p = new THREE.Vector3();
+    // Play area: table top (±6.4 × ±4.6) from the slab edge up to a tall tile stack / the teapot lid.
+    for (const x of [-6.6, 6.6]) for (const y of [-0.7, 2.2]) for (const z of [-4.8, 4.8]) {
+      p.set(x, y, z).applyMatrix4(inv);
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+      minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+    }
+    Object.assign(light.shadow.camera, { left: minX, right: maxX, top: maxY, bottom: minY, near: -maxZ - 0.5, far: -minZ + 0.5 });
+    light.shadow.camera.updateProjectionMatrix();
+  }
+
+  // -------------------------------------------------------------------------
+  // Graphics settings (live — no reload)
+  // -------------------------------------------------------------------------
+
+  /** Apply saved Graphics settings ({} = Auto). */
+  setGraphics(saved) {
+    this.gfxSaved = saved ?? {};
+    this.q = resolve(this.gfxSaved, this.detected);
+    this.adaptiveScale = 1;
+    this._frames = [];
+    this._applyGraphics();
+  }
+
+  _applyGraphics() {
+    const g = this.q;
+    const r = this.renderer;
+    // Shadows: enable/size the map; lit materials recompile for the new state.
+    const size = SHADOW_MAP[g.shadows];
+    const shadowChanged = r.shadowMap.enabled !== size > 0;
+    r.shadowMap.enabled = size > 0;
+    this.keyLight.castShadow = size > 0;
+    if (size > 0 && this.keyLight.shadow.mapSize.x !== size) {
+      this.keyLight.shadow.mapSize.set(size, size);
+      this.keyLight.shadow.map?.dispose();
+      this.keyLight.shadow.map = null;
+    }
+    // Image-based lighting: a studio room (reflections on tiles/teapot) or the cheap sky tint.
+    if (g.reflections === 'on') {
+      if (!this._envRoom) {
+        const pmrem = new THREE.PMREMGenerator(r);
+        const room = new RoomEnvironment(r);
+        this._envRoom = pmrem.fromScene(room, 0.04).texture;
+        room.dispose?.();
+        pmrem.dispose();
+      }
+      this.scene.environment = this._envRoom;
+      this.scene.environmentIntensity = 0.35;
+    } else {
+      this.scene.environment = this._envSimple;
+      this.scene.environmentIntensity = 1;
+    }
+    // Particles: draw counts only (pools are allocated at the top tier).
+    const pc = PARTICLES[g.particles];
+    this.petals.count = pc.petals;
+    this.mist.geometry.setDrawRange(0, pc.mist);
+    this.steam.geometry.setDrawRange(0, pc.steam);
+    this.steam.visible = pc.steam > 0;
+    this.burstCount = Math.round(MAX_BURST * pc.burst);
+    // Detail: distant islands, table grain relief, glossy tiles.
+    const islands = g.detail === 'detailed' ? MAX_ISLANDS : 2;
+    this.islands.children.forEach((isl, i) => (isl.visible = i < islands));
+    const detailed = g.detail === 'detailed';
+    if (this.tableMaterial.userData.detailed !== detailed) {
+      this.tableMaterial.userData.detailed = detailed;
+      this.tableMaterial.bumpMap = detailed ? this.tableMaterial.map : null;
+      this.tableMaterial.bumpScale = 2.2;
+      this.tableMaterial.roughnessMap = detailed ? this.grainTexture : null;
+      this.tableMaterial.needsUpdate = true;
+    }
+    if (this._tileDetail !== detailed) {
+      this._tileDetail = detailed;
+      this._rebuildTileMaterials();
+    }
+    if (shadowChanged) {
+      this.scene.traverse((o) => {
+        if (o.material && !o.material.isShaderMaterial) {
+          for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.needsUpdate = true;
+        }
+      });
+      for (const m of this.materialCache.values()) m.needsUpdate = true;
+    }
+    this.postKey = null; // rebuild the post chain on the next frame
+    this._ambientPosed = false; // re-pose particles for the new counts
+    this._fpsVisible(g.showFps);
+    this.canvas.dataset.gfxPreset = g.preset;
+    document.body.dataset.gfxPreset = g.preset;
+    this.applyRenderScale();
+  }
+
+  /** Whether decorative motion runs (Background setting + reduced-motion preferences). */
+  _ambientMoving() {
+    return this.q.background === 'animated' && !this.reducedMotion && !this._prefersReduced?.matches;
+  }
+
+  /** What the Graphics panel shows: GPU, auto choice, resolved tiers, cost and frame rate. */
+  graphicsInfo(words) {
+    const px = [Math.round(this.size[0] * this.pixelRatio), Math.round(this.size[1] * this.pixelRatio)];
+    return {
+      gpu: this.gpu || 'unknown GPU',
+      detected: this.detected,
+      resolved: this.q,
+      summary: describe(this.q, px, words),
+      fps: Math.round(this.fps || 0),
+      adaptiveScale: Math.round(this.adaptiveScale * 100) / 100,
+      postFailed: !!this.postFailed,
+    };
+  }
+
+  _fpsVisible(on) {
+    let el = document.getElementById('fps-meter');
+    if (on && !el) {
+      el = document.createElement('div');
+      el.id = 'fps-meter';
+      el.className = 'fps-meter';
+      el.setAttribute('aria-hidden', 'true');
+      el.textContent = '… fps';
+      document.body.append(el);
+    }
+    if (el) el.hidden = !on;
+  }
+
+  _postKey(w, h) {
+    const g = this.q;
+    return g.post && !this.postFailed ? [g.ao, g.bloom, g.grade, g.antialias, w, h, this.pixelRatio].join('|') : 'none';
+  }
+
+  _buildPost(w, h) {
+    const g = this.q;
+    for (const pass of this.composer?.passes ?? []) pass.dispose?.();
+    this.composer?.dispose();
+    this.composer = null;
+    if (!g.post || this.postFailed) return;
+    try {
+      const pw = Math.max(1, Math.round(w * this.pixelRatio));
+      const ph = Math.max(1, Math.round(h * this.pixelRatio));
+      const target = new THREE.WebGLRenderTarget(pw, ph, {
+        type: THREE.HalfFloatType,
+        samples: g.antialias === 'msaa' ? 4 : 0,
+      });
+      const composer = new EffectComposer(this.renderer, target);
+      composer.setPixelRatio(this.pixelRatio);
+      composer.setSize(w, h);
+      composer.addPass(new RenderPass(this.scene, this.camera));
+      if (g.ao !== 'off') {
+        const ao = new GTAOPass(this.scene, this.camera, pw, ph);
+        ao.output = GTAOPass.OUTPUT.Default;
+        ao.blendIntensity = 0.75;
+        ao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.6, thickness: 1.2, scale: 1.0, samples: g.ao === 'high' ? 16 : 8 });
+        ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: g.ao === 'high' ? 6 : 4, rings: 2, samples: g.ao === 'high' ? 16 : 8 });
+        composer.addPass(ao);
+      }
+      if (g.bloom === 'on') {
+        // Threshold above lit ivory (the HDR buffer is pre-tone-mapping): only clearcoat glints and triple bursts bloom.
+        composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.4, 0.4, 1.25));
+      }
+      if (g.grade === 'on') composer.addPass(new ShaderPass(GradeShader));
+      composer.addPass(new OutputPass());
+      if (g.antialias === 'smaa') composer.addPass(new SMAAPass(pw, ph));
+      if (g.antialias === 'fxaa') {
+        const fxaa = new ShaderPass(FXAAShader);
+        fxaa.material.uniforms.resolution.value.set(1 / pw, 1 / ph);
+        composer.addPass(fxaa);
+      }
+      this.composer = composer;
+    } catch {
+      // Post-processing is an enhancement: render directly and let the panel say so.
+      this.postFailed = true;
+      this.composer = null;
+    }
+  }
+
+  /** Adaptive resolution: step the render scale down when frames are slow, back up when fast. */
+  _adapt(dtMs) {
+    const f = this._frames;
+    f.push(dtMs);
+    if (f.length < 90) return false;
+    const avg = f.reduce((a, b) => a + b, 0) / f.length;
+    f.length = 0;
+    this.fps = 1000 / avg;
+    const el = document.getElementById('fps-meter');
+    if (el && !el.hidden) el.textContent = `${Math.round(this.fps)} fps · ${Math.round(this.pixelRatio * 100) / 100}×`;
+    if (!this.q.adaptive) return false;
+    const before = this.adaptiveScale;
+    if (avg > 26) this.adaptiveScale = Math.max(0.6, this.adaptiveScale - 0.1);
+    else if (avg < 14 && this.adaptiveScale < 1) this.adaptiveScale = Math.min(1, this.adaptiveScale + 0.05);
+    return before !== this.adaptiveScale;
   }
 
   _bindContextEvents() {
@@ -163,6 +430,10 @@ export class TeaScene {
       }
     });
     disposeTextureSets(this.textureSets);
+    for (const pass of this.composer?.passes ?? []) pass.dispose?.();
+    this.composer?.dispose();
+    this._envRoom?.dispose();
+    this._envSimple?.dispose();
     this.renderer?.dispose();
     this.tiles.clear();
     this.tweens.length = 0;
@@ -178,14 +449,17 @@ export class TeaScene {
 
     // Sky dome: vertical gradient with a warm horizon band (no textures).
     const skyGeo = new THREE.SphereGeometry(90, 24, 16);
+    // The dome is encoded through the renderer's colour-space chunk so the
+    // direct (Low) and post-processed skies match.
     const skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
       fog: false,
+      toneMapped: false,
       uniforms: {
-        top: { value: new THREE.Color(t.sky[0]) },
-        mid: { value: new THREE.Color(t.sky[1]) },
-        bottom: { value: new THREE.Color(t.sky[2]) },
+        top: { value: skyColor(t.sky[0]) },
+        mid: { value: skyColor(t.sky[1]) },
+        bottom: { value: skyColor(t.sky[2]) },
       },
       vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
       fragmentShader: `
@@ -194,6 +468,7 @@ export class TeaScene {
           float h = normalize(vP).y;
           vec3 c = h > 0.0 ? mix(mid, top, smoothstep(0.0, 0.6, h)) : mix(mid, bottom, smoothstep(0.0, -0.5, h));
           gl_FragColor = vec4(c, 1.0);
+          #include <colorspace_fragment>
         }`,
     });
     this.sky = new THREE.Mesh(skyGeo, skyMat);
@@ -209,15 +484,19 @@ export class TeaScene {
     envGlow.position.set(4, 6, -6);
     envGlow.lookAt(0, 0, 0);
     envScene.add(envSky, envGlow);
-    this.scene.environment = pmrem.fromScene(envScene, 0.04).texture;
+    this._envSimple = pmrem.fromScene(envScene, 0.04).texture;
+    this.scene.environment = this._envSimple;
     pmrem.dispose();
+    this.grainTexture = buildGrainTexture(decorStream('grain'));
 
     // Table + carved trim + floating rock underside.
     const wood = buildWoodTexture('#8a5a3b', '#5e3a24', decor);
-    wood.repeat.set(3, 2);
+    // Extrude UVs are in world units (table ≈ 12.8 × 9.2): ~2 grain repeats across.
+    wood.repeat.set(0.16, 0.16);
+    wood.anisotropy = 8;
     this.tableMaterial = new THREE.MeshStandardMaterial({ map: wood, roughness: 0.62, metalness: 0.05 });
     this.table = new THREE.Mesh(createTableGeometry(), this.tableMaterial);
-    this.table.receiveShadow = this.tier.shadows;
+    this.table.receiveShadow = true;
     this.table.layers.set(LAYER_ENV);
     this.scene.add(this.table);
 
@@ -227,19 +506,19 @@ export class TeaScene {
     this.scene.add(this.rock);
 
     // Tea set props (signature storytelling, kept clear of the play area).
-    const potMat = new THREE.MeshStandardMaterial({ color: 0x7a4a3a, roughness: 0.4, metalness: 0.1 });
+    const potMat = new THREE.MeshPhysicalMaterial({ color: 0x7a4a3a, roughness: 0.38, metalness: 0.05, clearcoat: 0.6, clearcoatRoughness: 0.2 });
     this.teapot = new THREE.Mesh(createTeapotGeometry(), potMat);
     this.teapot.position.set(-4.6, 0.02, -2.2);
     this.teapot.scale.setScalar(1.4);
-    this.teapot.castShadow = this.tier.shadows;
+    this.teapot.castShadow = true;
     this.teapot.layers.set(LAYER_ENV);
     this.scene.add(this.teapot);
-    const cupMat = new THREE.MeshStandardMaterial({ color: 0xd8c8b0, roughness: 0.5 });
+    const cupMat = new THREE.MeshPhysicalMaterial({ color: 0xe8dcc8, roughness: 0.35, clearcoat: 0.7, clearcoatRoughness: 0.15 });
     this.cups = new THREE.Group();
     for (let i = 0; i < 2; i++) {
       const cup = new THREE.Mesh(createCupGeometry(), cupMat);
       cup.position.set(-3.4 + i * 0.8, 0.02, -2.9 + i * 0.35);
-      cup.castShadow = this.tier.shadows;
+      cup.castShadow = true;
       cup.layers.set(LAYER_ENV);
       this.cups.add(cup);
     }
@@ -248,7 +527,7 @@ export class TeaScene {
     // Distant islands + clouds, deterministic per scene seed.
     this.islands = new THREE.Group();
     const islandMat = new THREE.MeshStandardMaterial({ color: 0x6a7a5e, roughness: 0.9, flatShading: true });
-    for (let i = 0; i < this.tier.islands; i++) {
+    for (let i = 0; i < MAX_ISLANDS; i++) {
       const isl = new THREE.Mesh(createIslandGeometry(decor, decor.range(1.2, 2.4)), islandMat);
       const a = decor.range(0, Math.PI * 2);
       const r = decor.range(16, 30);
@@ -272,7 +551,7 @@ export class TeaScene {
     this.scene.add(this.clouds);
 
     // Mist ring under the table (points, raycast-free by layer).
-    const mistCount = this.tier.mist;
+    const mistCount = MAX_MIST;
     const mistGeo = new THREE.BufferGeometry();
     const mp = new Float32Array(mistCount * 3);
     this.mistSeeds = new Float32Array(mistCount * 2);
@@ -290,10 +569,10 @@ export class TeaScene {
       mistGeo,
       new THREE.PointsMaterial({
         map: buildSoftCircleTexture(),
-        color: 0xffffff,
+        color: mistColor(t),
         size: 2.4,
         transparent: true,
-        opacity: 0.14,
+        opacity: 0.12,
         depthWrite: false,
         sizeAttenuation: true,
       }),
@@ -303,7 +582,7 @@ export class TeaScene {
     this.scene.add(this.mist);
 
     // Drifting petals (instanced; bounded; seeded).
-    const petalCount = this.tier.petals;
+    const petalCount = MAX_PETALS;
     const petalGeo = new THREE.PlaneGeometry(0.22, 0.22);
     const petalMat = new THREE.MeshBasicMaterial({
       map: buildPetalTexture('#e8a4b8'),
@@ -330,6 +609,67 @@ export class TeaScene {
     this._petalMat4 = new THREE.Matrix4();
     this._petalQuat = new THREE.Quaternion();
     this._petalEuler = new THREE.Euler();
+
+    // Steam curling from the teapot spout (bounded, seeded; drawn only at medium/high particles).
+    const steamGeo = new THREE.BufferGeometry();
+    const sp = new Float32Array(MAX_STEAM * 3);
+    const sl = new Float32Array(MAX_STEAM);
+    this.steamSeeds = new Float32Array(MAX_STEAM * 2);
+    for (let i = 0; i < MAX_STEAM; i++) {
+      sl[i] = i / MAX_STEAM;
+      this.steamSeeds[i * 2] = decor.range(0, Math.PI * 2);
+      this.steamSeeds[i * 2 + 1] = decor.range(0.7, 1.3);
+    }
+    steamGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    steamGeo.setAttribute('aLife', new THREE.BufferAttribute(sl, 1));
+    this.steam = new THREE.Points(
+      steamGeo,
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        uniforms: { map: { value: buildSoftCircleTexture() }, uScale: { value: 300 } },
+        vertexShader: `
+          attribute float aLife; varying float vLife; uniform float uScale;
+          void main() {
+            vLife = aLife;
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            gl_PointSize = uScale * (0.12 + aLife * 0.34) / -mv.z;
+            gl_Position = projectionMatrix * mv;
+          }`,
+        fragmentShader: `
+          uniform sampler2D map; varying float vLife;
+          void main() {
+            float a = texture2D(map, gl_PointCoord).a * smoothstep(0.0, 0.15, vLife) * (1.0 - vLife) * 0.32;
+            gl_FragColor = vec4(vec3(1.0, 0.98, 0.95), a);
+          }`,
+      }),
+    );
+    this.steam.frustumCulled = false;
+    this.steam.layers.set(LAYER_ENV);
+    this.steam.raycast = () => {};
+    this._updateSteam(0);
+    this.scene.add(this.steam);
+  }
+
+  _updateSteam(dt) {
+    const pos = this.steam.geometry.attributes.position;
+    const life = this.steam.geometry.attributes.aLife;
+    const n = this.steam.geometry.drawRange.count === Infinity ? MAX_STEAM : Math.min(MAX_STEAM, this.steam.geometry.drawRange.count);
+    for (let i = 0; i < n; i++) {
+      let l = life.getX(i) + dt * 0.28 * this.steamSeeds[i * 2 + 1];
+      if (l >= 1) l -= 1;
+      life.setX(i, l);
+      const ph = this.steamSeeds[i * 2];
+      const rise = l * 1.9;
+      pos.setXYZ(
+        i,
+        STEAM_ORIGIN.x + 0.12 * l + Math.sin(ph + l * 5 + this.time * 0.8) * 0.12 * l,
+        STEAM_ORIGIN.y + rise,
+        STEAM_ORIGIN.z + Math.cos(ph + l * 4) * 0.1 * l,
+      );
+    }
+    pos.needsUpdate = true;
+    life.needsUpdate = true;
   }
 
   // -------------------------------------------------------------------------
@@ -341,7 +681,7 @@ export class TeaScene {
     const baseMat = new THREE.MeshStandardMaterial({ color: this.theme.tableTrim, roughness: 0.6 });
     this.trayBase = new THREE.Mesh(createTrayBaseGeometry(capacity), baseMat);
     this.trayBase.position.set(0, 0.03, 3.65);
-    this.trayBase.receiveShadow = this.tier.shadows;
+    this.trayBase.receiveShadow = true;
     this.trayBase.layers.set(LAYER_ENV);
     this.trayGroup.add(this.trayBase);
 
@@ -399,7 +739,7 @@ export class TeaScene {
   _buildVFXPools() {
     // Bounded pooled bursts — allocated once, reused, never raycast.
     const burstCount = 4;
-    const perBurst = Math.round(140 * this.tier.particles);
+    const perBurst = MAX_BURST;
     const tex = buildSoftCircleTexture();
     for (let b = 0; b < burstCount; b++) {
       const geo = new THREE.BufferGeometry();
@@ -434,12 +774,14 @@ export class TeaScene {
     const t = THEMES[themeId];
     if (!t || t === this.theme) return;
     this.theme = t;
-    this.sky.material.uniforms.top.value.set(t.sky[0]);
-    this.sky.material.uniforms.mid.value.set(t.sky[1]);
-    this.sky.material.uniforms.bottom.value.set(t.sky[2]);
+    this.sky.material.uniforms.top.value.copy(skyColor(t.sky[0]));
+    this.sky.material.uniforms.mid.value.copy(skyColor(t.sky[1]));
+    this.sky.material.uniforms.bottom.value.copy(skyColor(t.sky[2]));
     this.scene.fog.color.set(t.fog);
+    this.mist.material.color.copy(mistColor(t));
     this.keyLight.color.set(t.key.color);
     this.keyLight.intensity = t.key.intensity;
+    this.keyBase = t.key.intensity;
     this.fillLight.color.set(t.fill.color);
     this.fillLight.intensity = t.fill.intensity;
     this.trayBase.material.color.set(t.tableTrim);
@@ -450,32 +792,24 @@ export class TeaScene {
     this._rebuildTileMaterials();
   }
 
-  setTier(tierId) {
-    // Tier changes that need a renderer rebuild (AA, shadows) are applied by
-    // the app through a full scene rebuild; live-adjustable knobs go here.
-    this.tier = TIERS[tierId] ?? this.tier;
-    this.renderer.shadowMap.enabled = this.tier.shadows;
-    this.keyLight.castShadow = this.tier.shadows;
-    this.applyRenderScale();
-  }
-
-  setRenderScaleFactor(f) {
-    this.renderScaleFactor = f;
-    this.applyRenderScale();
-  }
-
+  /** Pixel ratio = min(dpr, preset cap) × preset/user scale × adaptive scale. */
   applyRenderScale() {
-    const dpr = Math.min(window.devicePixelRatio || 1, this.tier.dprCap);
-    this.renderer.setPixelRatio(dpr * this.tier.renderScale * this.renderScaleFactor);
     this.resize();
   }
 
   resize() {
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
+    const ratio = Math.min(window.devicePixelRatio || 1, this.q.dprCap) * this.q.scale * this.adaptiveScale;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(w, h, false);
+    if (w !== this.size[0] || h !== this.size[1] || ratio !== this.pixelRatio) {
+      this.size = [w, h];
+      this.pixelRatio = ratio;
+      this.renderer.setPixelRatio(ratio);
+      this.renderer.setSize(w, h, false);
+      if (this.steam) this.steam.material.uniforms.uScale.value = h * ratio * 0.5;
+    }
     const anchor = this.rig.anchorForAspect(w / h, this._cameraPreference ?? 'default');
     if (anchor !== this.rig.anchor && !this._anchorLocked) this.rig.setAnchor(anchor);
   }
@@ -514,7 +848,7 @@ export class TeaScene {
     const key = sym + (exposed ? ':lit' : ':dim');
     if (this.materialCache.has(key)) return this.materialCache.get(key);
     const set = this.textureSets.get(sym);
-    const mat = new THREE.MeshStandardMaterial({
+    const base = {
       color: exposed ? this.theme.tile : 0x9a8f7c,
       map: set?.map ?? null,
       bumpMap: set?.bumpMap ?? null,
@@ -522,7 +856,18 @@ export class TeaScene {
       roughness: 0.55,
       metalness: 0.04,
       emissive: new THREE.Color(0x000000),
-    });
+    };
+    // Detailed: lacquered tiles — clearcoat over a faintly mottled surface.
+    const mat = this._tileDetail
+      ? new THREE.MeshPhysicalMaterial({
+          ...base,
+          roughness: 0.5,
+          roughnessMap: this.grainTexture,
+          clearcoat: exposed ? 0.55 : 0.2,
+          clearcoatRoughness: 0.28,
+          envMapIntensity: 0.9,
+        })
+      : new THREE.MeshStandardMaterial(base);
     this.materialCache.set(key, mat);
     return mat;
   }
@@ -557,8 +902,8 @@ export class TeaScene {
     this.boardOffset = { x: (minX + maxX) / 4, y: (minY + maxY) / 4 }; // half-units→world /2, center
     for (const t of level.tiles) {
       const mesh = new THREE.Mesh(this.tileGeometry, null);
-      mesh.castShadow = this.tier.shadows;
-      mesh.receiveShadow = false;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       mesh.layers.set(LAYER_GAME);
       const home = this._tileWorld(t);
       mesh.position.copy(home);
@@ -783,6 +1128,8 @@ export class TeaScene {
     const rand = this.fxRand; // seeded audiovisual stream — replay-consistent
     const pos = b.points.geometry.attributes.position;
     const col = b.points.geometry.attributes.color;
+    b.count = this.burstCount ?? MAX_BURST;
+    b.points.geometry.setDrawRange(0, b.count);
     const n = b.count;
     for (let i = 0; i < n; i++) {
       pos.setXYZ(i, origin.x, origin.y, origin.z);
@@ -939,7 +1286,26 @@ export class TeaScene {
       this._updateTweens(dt);
       this._updateBursts(dt);
       this._updateAmbient(dt);
-      this.renderer.render(this.scene, this.camera);
+      if (this._adapt(dtMs)) this.applyRenderScale();
+      const [w, h] = this.size;
+      const key = this._postKey(w, h);
+      if (key !== this.postKey) {
+        this.postKey = key;
+        this._buildPost(w, h);
+      }
+      if (this.composer) {
+        try {
+          this.composer.render(dt);
+        } catch {
+          this.postFailed = true;
+          this.composer = null;
+          this.postKey = null;
+          this.renderer.setRenderTarget(null);
+          this.renderer.render(this.scene, this.camera);
+        }
+      } else {
+        this.renderer.render(this.scene, this.camera);
+      }
     }
   }
 
@@ -984,11 +1350,25 @@ export class TeaScene {
   }
 
   _updateAmbient(dt) {
-    if (this.reducedMotion) {
-      dt *= 0.25; // decorative motion reduced, timing preserved
+    // Decorative motion stops entirely for reduced motion or a static background.
+    if (!this._ambientMoving()) {
+      if (!this._ambientPosed) {
+        this._ambientPosed = true;
+        this.keyLight.intensity = this.keyBase;
+        this._poseAmbient(0);
+      }
+      return;
     }
+    this._ambientPosed = false;
+    // Sun shimmer: a slow, very small breath in the key light (never a flicker).
+    this.keyLight.intensity = this.keyBase * (1 + 0.025 * Math.sin(this.time * 0.6) + 0.012 * Math.sin(this.time * 1.7));
+    if (this.steam.visible) this._updateSteam(dt);
+    this._poseAmbient(dt);
+  }
+
+  _poseAmbient(dt) {
     // Petals drift downward and respawn above (bounded loop).
-    for (let i = 0; i < this.petalData.length; i++) {
+    for (let i = 0; i < this.petals.count; i++) {
       const p = this.petalData[i];
       p.y -= p.speed * dt;
       p.x += Math.sin(this.time * 0.6 + p.phase) * dt * 0.3;
@@ -1005,7 +1385,7 @@ export class TeaScene {
 
     // Mist slow swirl.
     const mp = this.mist.geometry.attributes.position;
-    const n = mp.count;
+    const n = Math.min(mp.count, this.mist.geometry.drawRange.count);
     for (let i = 0; i < n; i++) {
       const ph = this.mistSeeds[i * 2];
       const sp = this.mistSeeds[i * 2 + 1];
@@ -1028,4 +1408,42 @@ export class TeaScene {
       if (c.position.x > 36) c.position.x = -36;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Unmasked GPU name when the browser exposes it (quietly; never logs). */
+function readGpuName(renderer) {
+  try {
+    const gl = renderer.getContext();
+    const firefox = /firefox/i.test(navigator.userAgent || '');
+    if (!firefox) {
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      if (ext) return String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '');
+    }
+    return String(gl.getParameter(gl.RENDERER) || '');
+  } catch {
+    return '';
+  }
+}
+
+function isTouchDevice() {
+  try {
+    const ua = navigator.userAgent || '';
+    return /Mobi|Android|iPhone|iPad/i.test(ua) || (window.matchMedia?.('(pointer: coarse)').matches && navigator.maxTouchPoints > 0);
+  } catch {
+    return false;
+  }
+}
+
+// Authored sky hexes, darkened toward dusk so HUD text over the sky keeps its contrast.
+function skyColor(hex) {
+  return new THREE.Color(hex).multiplyScalar(0.62);
+}
+
+// Mist sprites take a little of the theme's haze so the cloud sea sits in the scene.
+function mistColor(theme) {
+  return new THREE.Color(0xffffff).lerp(new THREE.Color(theme.fog), 0.35);
 }

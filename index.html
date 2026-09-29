@@ -9,7 +9,7 @@
   <title>Trio Tiles</title>
   <link rel="stylesheet" href="css/main.css">
   <script type="importmap">
-    { "imports": { "three": "./js/vendor/three.module.js" } }
+    { "imports": { "three": "./js/vendor/three.module.js", "three/addons/": "./js/vendor/three/addons/" } }
   </script>
 </head>
 <body>
@@ -231,16 +231,22 @@
               <label><input type="checkbox" name="muted"> Mute all</label>
               <label><input type="checkbox" name="captions"> Captions for sound cues</label>
             </fieldset>
-            <fieldset>
-              <legend>Graphics</legend>
-              <label>Quality
-                <select name="graphicsTier">
-                  <option value="auto">Auto</option>
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                </select>
+            <fieldset id="gfx-section" class="gfx-section" data-gfx-section>
+              <legend id="gfx-legend">Graphics</legend>
+              <label for="gfx-preset" class="gfx-row"><span id="gfx-l-quality">Quality</span>
+                <select id="gfx-preset" data-gfx="preset"></select>
               </label>
+              <label for="gfx-scale" class="gfx-scale-label"><span id="gfx-l-scale">Render scale</span>
+                <span class="gfx-scale-row">
+                  <input type="range" id="gfx-scale" data-gfx="render_scale" min="50" max="200" step="5" value="100">
+                  <output id="gfx-scale-value" for="gfx-scale">100%</output>
+                </span>
+              </label>
+              <div id="gfx-categories" class="gfx-categories"></div>
+              <label><input type="checkbox" id="gfx-adaptive" data-gfx="adaptive"> <span id="gfx-l-adaptive">Adaptive resolution</span></label>
+              <label><input type="checkbox" id="gfx-fps" data-gfx="show_fps"> <span id="gfx-l-fps">Show frame rate</span></label>
+              <p id="gfx-summary" class="gfx-summary dim-line"></p>
+              <p id="gfx-post-note" class="gfx-note" role="status" hidden></p>
               <label>Camera
                 <select name="cameraView">
                   <option value="default">Default</option>

@@ -35,7 +35,7 @@ import { SaveStore } from './session/storage.js';
 import { HostPlatform } from './platform/host.js';
 import { AudioEngine } from './audio/audio.js';
 import { TeaScene } from './render/scene.js';
-import { detectTier, FrameMonitor } from './render/quality.js';
+import { fromLegacyTier } from './render/gfx.js';
 import { UI, fmtMs } from './ui/ui.js';
 
 const TICK_MS = 250; // fixed simulation quantum submitted while active
@@ -78,18 +78,13 @@ class App {
     }
 
     this.ui.boot(3, 4, 'Setting the table…');
-    const tierId =
-      this.store.settings.graphicsTier === 'auto' ? detectTier() : this.store.settings.graphicsTier;
     this.scene = new TeaScene(document.getElementById('game-canvas'), {
-      tier: tierId,
+      graphics: this._graphicsSaved(),
       reducedMotion: this.store.settings.reducedMotion,
       colorblindPalette: this.store.settings.colorblindPalette,
       onContextLost: () => this._onContextLost(),
     });
-    this.monitor = new FrameMonitor((change) => {
-      if (change.renderScaleFactor) this.scene.setRenderScaleFactor(change.renderScaleFactor);
-      if (change.suggestTierDrop) this.ui.caption('Graphics lowered to keep play smooth');
-    });
+    this._refreshGraphicsPanel();
     this._bindInputs();
 
     this.ui.boot(4, 4, 'Contacting the host…');
@@ -157,6 +152,7 @@ class App {
       mirrorSelect: (tileId) => this.selectTile(tileId),
       mirrorFocus: (tileId) => this.scene?.setFocus(tileId),
       settingsChanged: (patch) => this._settingsChanged(patch),
+      graphicsChanged: (next) => this._graphicsChanged(next),
       profileRename: () => this._renameProfile(),
       replayTutorial: () => {
         this.ui.closePause();
@@ -772,9 +768,27 @@ class App {
             : this.round.level.theme;
         this.scene.setTheme(themeId);
       }
-      if ('graphicsTier' in patch && s.graphicsTier !== 'auto') this.scene.setTier(s.graphicsTier);
     }
     this.host.track('settings_change', { key: Object.keys(patch)[0] });
+  }
+
+  /** Saved Graphics settings; a legacy single "graphicsTier" maps onto a preset. */
+  _graphicsSaved() {
+    const s = this.store.settings;
+    if (s.graphics && typeof s.graphics === 'object' && Object.keys(s.graphics).length) return s.graphics;
+    const legacy = fromLegacyTier(s.graphicsTier);
+    return legacy === 'auto' ? {} : { preset: legacy };
+  }
+
+  _graphicsChanged(next) {
+    this.store.updateSettings({ graphics: next });
+    this.scene?.setGraphics(next);
+    this._refreshGraphicsPanel();
+    this.host.track('settings_change', { key: 'graphics' });
+  }
+
+  _refreshGraphicsPanel() {
+    this.ui.renderGraphics(this._graphicsSaved(), this.scene?.graphicsInfo(this.ui.gfxT.words));
   }
 
   _onContextLost() {
@@ -785,7 +799,7 @@ class App {
       const state = this.session?.state;
       this.scene.dispose();
       this.scene = new TeaScene(canvas, {
-        tier: this.scene.tier.id,
+        graphics: this._graphicsSaved(),
         reducedMotion: this.store.settings.reducedMotion,
         colorblindPalette: this.store.settings.colorblindPalette,
         onContextLost: () => this._onContextLost(),
@@ -859,7 +873,6 @@ class App {
 
     window.addEventListener('keydown', (e) => this._onKey(e));
     window.addEventListener('resize', () => {
-      this.scene.applyRenderScale();
       this.scene.resize();
     });
     document.addEventListener('visibilitychange', () => {
@@ -999,8 +1012,12 @@ class App {
     this._lastFrame = now;
     const hidden = document.hidden;
     if (!hidden) {
-      this.monitor?.frame(dt);
       this.scene?.render(dt, { hidden: false });
+      // Keep the Graphics summary (pixels, post note) current while settings are open.
+      if (this.scene && this.ui.isPauseOpen() && now - (this._gfxInfoAt ?? 0) > 1000) {
+        this._gfxInfoAt = now;
+        this.ui.updateGraphicsInfo(this.scene.graphicsInfo(this.ui.gfxT.words));
+      }
     }
     this._pollGamepad();
     requestAnimationFrame((t) => this._frame(t));

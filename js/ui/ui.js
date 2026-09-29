@@ -9,6 +9,8 @@
 
 import { SYMBOL_NAMES } from '../rules/layout.js';
 import { symbolColor } from '../render/materials.js';
+import { CATEGORIES, PRESETS, presetTier, choosePreset } from '../render/gfx.js';
+import { gfxStrings } from './gfx-strings.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -18,7 +20,7 @@ export class UI {
    *   play(), modeSelected(mode), nav(target), setupPicked(id), pause(),
    *   resume(), leaveRound(), undo(), hint(), cameraReset(), retry(), next(),
    *   mirrorSelect(tileId), settingsChanged(patch), profileRename(),
-   *   replayTutorial(), pauseHelp()
+   *   replayTutorial(), pauseHelp(), graphicsChanged(savedGraphics)
    */
   constructor(actions) {
     this.a = actions;
@@ -68,7 +70,103 @@ export class UI {
       liveResults: $('live-results'),
     };
     this._captionTimer = null;
+    this.gfxT = gfxStrings();
+    this._gfxSaved = {};
+    this._buildGraphics();
     this._bind();
+  }
+
+  // -------------------------------------------------------------------------
+  // Graphics section (quality preset, render scale, per-category overrides)
+  // -------------------------------------------------------------------------
+
+  _buildGraphics() {
+    const t = this.gfxT;
+    $('gfx-legend').textContent = t.graphics;
+    $('gfx-l-quality').textContent = t.quality;
+    $('gfx-l-scale').textContent = t.renderScale;
+    $('gfx-l-adaptive').textContent = t.adaptive;
+    $('gfx-l-fps').textContent = t.showFps;
+    const wrap = $('gfx-categories');
+    wrap.textContent = '';
+    this._gfxCatSelects = {};
+    for (const [cat, tiers] of Object.entries(CATEGORIES)) {
+      const label = document.createElement('label');
+      label.htmlFor = `gfx-cat-${cat}`;
+      label.className = 'gfx-row';
+      const span = document.createElement('span');
+      span.textContent = t.categories[cat];
+      const sel = document.createElement('select');
+      sel.id = `gfx-cat-${cat}`;
+      sel.dataset.gfxCat = cat;
+      for (const v of ['preset', ...tiers]) {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = v === 'preset' ? '' : t.tiers[v];
+        sel.appendChild(o);
+      }
+      label.append(span, sel);
+      wrap.appendChild(label);
+      this._gfxCatSelects[cat] = sel;
+    }
+    const section = $('gfx-section');
+    section.addEventListener('input', (e) => this._onGraphicsInput(e.target));
+  }
+
+  _onGraphicsInput(el) {
+    const saved = { ...this._gfxSaved };
+    let next = null;
+    if (el.id === 'gfx-preset') {
+      next = choosePreset(saved, el.value);
+    } else if (el.dataset.gfxCat) {
+      next = saved;
+      if (el.value === 'preset') delete next[el.dataset.gfxCat];
+      else next[el.dataset.gfxCat] = el.value;
+    } else if (el.id === 'gfx-scale') {
+      next = saved;
+      next.render_scale = Number(el.value) / 100;
+      $('gfx-scale-value').textContent = `${el.value}%`;
+    } else if (el.id === 'gfx-adaptive' || el.id === 'gfx-fps') {
+      next = saved;
+      next[el.dataset.gfx] = el.checked;
+    }
+    if (next) this.a.graphicsChanged?.(next);
+  }
+
+  /** Reflect saved graphics settings + renderer info into the Graphics section. */
+  renderGraphics(saved, info) {
+    const t = this.gfxT;
+    this._gfxSaved = { ...(saved ?? {}) };
+    const s = this._gfxSaved;
+    const detected = info?.detected ?? 'balanced';
+    const presetSel = $('gfx-preset');
+    presetSel.textContent = '';
+    for (const v of ['auto', ...PRESETS]) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = v === 'auto' ? t.auto(t.presets[detected]) : t.presets[v];
+      presetSel.appendChild(o);
+    }
+    presetSel.value = PRESETS.includes(s.preset) ? s.preset : 'auto';
+    const active = info?.resolved?.preset ?? (PRESETS.includes(s.preset) ? s.preset : detected);
+    for (const [cat, sel] of Object.entries(this._gfxCatSelects)) {
+      sel.options[0].textContent = t.fromPreset(t.tiers[presetTier(active, cat)]);
+      sel.value = CATEGORIES[cat].includes(s[cat]) ? s[cat] : 'preset';
+    }
+    const pct = Math.round((Number(s.render_scale) || 1) * 100);
+    $('gfx-scale').value = String(pct);
+    $('gfx-scale-value').textContent = `${pct}%`;
+    $('gfx-adaptive').checked = s.adaptive !== false;
+    $('gfx-fps').checked = !!s.show_fps;
+    this.updateGraphicsInfo(info);
+  }
+
+  updateGraphicsInfo(info) {
+    if (!info) return;
+    $('gfx-summary').textContent = `${info.gpu} · ${info.summary}`;
+    const note = $('gfx-post-note');
+    note.hidden = !info.postFailed;
+    note.textContent = info.postFailed ? this.gfxT.postUnavailable : '';
   }
 
   _bind() {

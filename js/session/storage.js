@@ -17,7 +17,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   voice: 0.8,
   muted: false,
   captions: false,
-  graphicsTier: 'auto', // auto | low | medium | high
+  graphicsTier: 'auto', // legacy single tier (auto | low | medium | high); migrated into `graphics`
+  graphics: {}, // { preset: 'auto'|low|balanced|high|ultra, render_scale, adaptive, show_fps, <category>: tier }
   reducedMotion: false,
   highContrast: false,
   colorblindPalette: 'default', // default | deuteranopia | protanopia | tritanopia

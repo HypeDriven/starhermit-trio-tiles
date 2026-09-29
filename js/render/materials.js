@@ -294,8 +294,13 @@ export function buildTileTextures(symbolIds, theme, palette = 'default') {
 
     const face = cellCanvas();
     const f = face.getContext('2d');
-    f.fillStyle = '#00000000';
-    f.clearRect(0, 0, T, T);
+    // Opaque ivory base (the material colour tints it per theme); a faint
+    // radial falloff reads as a gently dished, hand-carved face.
+    const dish = f.createRadialGradient(T / 2, T / 2, T * 0.1, T / 2, T / 2, T * 0.72);
+    dish.addColorStop(0, '#ffffff');
+    dish.addColorStop(1, '#ece6dc');
+    f.fillStyle = dish;
+    f.fillRect(0, 0, T, T);
     // Carved medallion ring
     f.strokeStyle = col;
     f.lineWidth = 6;
@@ -304,10 +309,10 @@ export function buildTileTextures(symbolIds, theme, palette = 'default') {
     f.stroke();
     f.globalAlpha = 1;
     drawNotches(f, i, col);
-    // Ink engraving with a soft highlight offset for depth
-    drawSymbolGlyph(f, symId, { ink: col, accent: col, x: 2, y: 4 });
-    f.globalAlpha = 0.25;
-    drawSymbolGlyph(f, symId, { ink: '#ffffff', accent: '#ffffff', x: -2, y: -3 });
+    // Ink engraving: a dark carved shadow offset under the coloured inlay keeps
+    // the symbol crisp against the pale tile face.
+    f.globalAlpha = 0.55;
+    drawSymbolGlyph(f, symId, { ink: '#2a1a10', accent: '#2a1a10', x: 3, y: 5 });
     f.globalAlpha = 1;
     drawSymbolGlyph(f, symId, { ink: col, accent: col });
 
@@ -364,6 +369,40 @@ export function buildWoodTexture(baseColor, darkColor, seedRand) {
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * Fine mottled grain used as a roughness map (lacquered tiles, table sheen).
+ * Mid-grey around 0.5 so the material's own roughness stays the average.
+ */
+export function buildGrainTexture(seedRand) {
+  const c = cellCanvas();
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(T, T);
+  for (let i = 0; i < T * T; i++) {
+    const v = 150 + Math.round(seedRand.range(-26, 26));
+    img.data[i * 4] = v;
+    img.data[i * 4 + 1] = v;
+    img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  // Soft blotches so the sheen breaks up at a larger scale too.
+  for (let k = 0; k < 18; k++) {
+    const x = seedRand.range(0, T);
+    const y = seedRand.range(0, T);
+    const r = seedRand.range(14, 48);
+    const g = ctx.createRadialGradient(x, y, 1, x, y, r);
+    const light = seedRand.range(0, 1) > 0.5;
+    g.addColorStop(0, light ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, T, T);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
   return tex;
 }
 
