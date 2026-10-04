@@ -31,8 +31,9 @@ import {
 import { SYMBOL_NAMES } from './rules/layout.js';
 import { suggestMove } from './rules/solver.js';
 import { Session } from './session/session.js';
-import { SaveStore } from './session/storage.js';
+import { SaveStore, DEFAULT_SETTINGS } from './session/storage.js';
 import { HostPlatform } from './platform/host.js';
+import { platformStrings } from './ui/platform-strings.js';
 import { AudioEngine } from './audio/audio.js';
 import { TeaScene } from './render/scene.js';
 import { fromLegacyTier } from './render/gfx.js';
@@ -43,12 +44,39 @@ const TAP_MAX_DIST = 12; // px — tap vs camera-drag threshold
 const TAP_MAX_MS = 600;
 const HOLD_MS = 400; // hold-to-confirm accessibility option
 
+// Keyboard actions — mirrored as control.* lines in starhermit.txt.
+const DEFAULT_BINDINGS = {
+  focus_left: ['ArrowLeft'],
+  focus_right: ['ArrowRight'],
+  focus_up: ['ArrowUp'],
+  focus_down: ['ArrowDown'],
+  pick: ['Enter', 'Space', 'NumpadEnter'],
+  undo: ['KeyU'],
+  hint: ['KeyH'],
+  camera: ['KeyC'],
+  pause: ['Escape'],
+};
+const FOCUS_KEYS = { focus_left: 'ArrowLeft', focus_right: 'ArrowRight', focus_up: 'ArrowUp', focus_down: 'ArrowDown' };
+const KEY_GLYPHS = { ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓', Escape: 'Esc', NumpadEnter: 'Num Enter' };
+function keyLabel(code) {
+  if (KEY_GLYPHS[code]) return KEY_GLYPHS[code];
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit\d$/.test(code)) return code.slice(5);
+  return code;
+}
+
+// Player preferences mirrored to the StarHermit settings KV.
+const SYNCED_SETTINGS = Object.keys(DEFAULT_SETTINGS).filter((k) => k !== 'graphicsTier' && k !== 'tutorialSeen');
+
 class App {
   constructor() {
     this.phase = 'boot';
     this.store = new SaveStore();
     this.host = new HostPlatform(this.store);
     this.ui = new UI(this._uiActions());
+    this.pt = platformStrings();
+    this.bindings = DEFAULT_BINDINGS;
+    this.codeAction = {};
     this.audio = new AudioEngine(this.store.settings);
     this.audio.onCaption = (t) => this.ui.caption(t);
     this.session = null;
@@ -92,8 +120,17 @@ class App {
     this.host.onSyncChange = () => {
       if (this.phase === 'title') this._refreshTitle();
     };
+    this.host.onAuthChange = () => {
+      this.ui.caption(this.pt('signedOut'));
+      this._refreshTitle();
+    };
+    this._setBindings(DEFAULT_BINDINGS);
     try {
       await this.host.init();
+      if (this.host.scope.hosted) {
+        this._setBindings(await this.host.loadBindings(DEFAULT_BINDINGS));
+        this._applyRemoteSettings(await this.host.getSettings());
+      }
     } catch {
       /* offline boot is fully supported */
     }
@@ -120,6 +157,11 @@ class App {
         p.roundsPlayed > 0
           ? `Journey ${journeyDone}/${JOURNEY.length} · ${p.roundsWon} tables cleared · daily streak ${this.store.doc.daily.streak}`
           : 'Fresh table — the kettle is on.',
+    });
+    this.ui.setPlatformButtons({
+      signIn: this.host.canSignIn(),
+      invite: this.host.scope.hosted && !!this.host.inviteLink(),
+      t: this.pt,
     });
     this.ui.setModeMeta({
       journey: journeyDone > 0 ? `${journeyDone}/${JOURNEY.length} stages cleared` : '',
@@ -154,6 +196,8 @@ class App {
       settingsChanged: (patch) => this._settingsChanged(patch),
       graphicsChanged: (next) => this._graphicsChanged(next),
       profileRename: () => this._renameProfile(),
+      signIn: () => this.host.signIn(),
+      invite: () => this._copyInvite(),
       replayTutorial: () => {
         this.ui.closePause();
         this._startLesson(LESSONS[0]);
@@ -182,6 +226,44 @@ class App {
       this._refreshTitle();
     }
     this.ui.showScreen(target);
+  }
+
+  async _copyInvite() {
+    const link = this.host.inviteLink();
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      this.ui.caption(this.pt('inviteCopied'));
+    } catch {
+      this.ui.caption(this.pt('inviteFailed', { link }));
+    }
+  }
+
+  // Keyboard actions route by event.code through the (platform-overridable)
+  // bindings declared as control.* lines in starhermit.txt.
+  _setBindings(bindings) {
+    this.bindings = bindings;
+    this.codeAction = {};
+    for (const [action, codes] of Object.entries(bindings)) for (const c of codes) this.codeAction[c] = action;
+    const k = (a) => (bindings[a] ?? []).map(keyLabel).join(' / ');
+    this.ui.setControlsHelp(
+      `Tap or click a tile. ${k('focus_left')} ${k('focus_right')} ${k('focus_up')} ${k('focus_down')} move focus between available tiles, ` +
+        `${k('pick')} picks, ${k('undo')} undoes, ${k('hint')} hints, ${k('camera')} resets the camera, ${k('pause')} pauses.`,
+    );
+  }
+
+  /** Platform settings win over local ones when signed in. */
+  _applyRemoteSettings(remote) {
+    const patch = {};
+    for (const key of SYNCED_SETTINGS) {
+      const v = remote?.[key];
+      if (v === undefined || v === null) continue;
+      if (typeof v === typeof DEFAULT_SETTINGS[key]) patch[key] = v;
+    }
+    if (!Object.keys(patch).length) return;
+    const { graphics, ...rest } = patch;
+    if (Object.keys(rest).length) this._settingsChanged(rest, { fromPlatform: true });
+    if (graphics) this._graphicsChanged(graphics, { fromPlatform: true });
   }
 
   _renameProfile() {
@@ -746,8 +828,9 @@ class App {
     this.audio.applySettings(s);
   }
 
-  _settingsChanged(patch) {
+  _settingsChanged(patch, opts = {}) {
     this.store.updateSettings(patch);
+    if (!opts.fromPlatform) this._pushSettings(patch);
     const s = this.store.settings;
     this._applySettings();
     this.host.setTelemetryConsent(!!s.telemetryConsent);
@@ -780,11 +863,19 @@ class App {
     return legacy === 'auto' ? {} : { preset: legacy };
   }
 
-  _graphicsChanged(next) {
+  _graphicsChanged(next, opts = {}) {
     this.store.updateSettings({ graphics: next });
+    if (!opts.fromPlatform) this._pushSettings({ graphics: next });
     this.scene?.setGraphics(next);
     this._refreshGraphicsPanel();
     this.host.track('settings_change', { key: 'graphics' });
+  }
+
+  /** Mirror player preferences to the StarHermit settings KV (signed in only). */
+  _pushSettings(patch) {
+    const out = {};
+    for (const key of Object.keys(patch)) if (SYNCED_SETTINGS.includes(key)) out[key] = patch[key];
+    if (Object.keys(out).length) this.host.patchSettings(out);
   }
 
   _refreshGraphicsPanel() {
@@ -887,7 +978,8 @@ class App {
     const inField = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName ?? '');
     if (inField) return;
 
-    if (e.key === 'Escape') {
+    const action = this.codeAction[e.code];
+    if (action === 'pause') {
       e.preventDefault();
       if (this.ui.isPauseOpen()) this.resumeGame();
       else if (this.phase === 'active') this.pauseGame();
@@ -902,30 +994,26 @@ class App {
     const el = document.activeElement;
     const onControl = /^(BUTTON|A|SUMMARY)$/.test(el?.tagName ?? '');
 
-    switch (e.key) {
-      case 'ArrowLeft':
-      case 'ArrowRight':
-      case 'ArrowUp':
-      case 'ArrowDown':
+    switch (action) {
+      case 'focus_left':
+      case 'focus_right':
+      case 'focus_up':
+      case 'focus_down':
         e.preventDefault();
-        this._moveFocus(e.key);
+        this._moveFocus(FOCUS_KEYS[action]);
         break;
-      case 'Enter':
-      case ' ':
+      case 'pick':
         if (onControl) break;
         e.preventDefault();
         this._confirmFocus();
         break;
-      case 'u':
-      case 'U':
+      case 'undo':
         this.doUndo();
         break;
-      case 'h':
-      case 'H':
+      case 'hint':
         this.doHint();
         break;
-      case 'c':
-      case 'C':
+      case 'camera':
         this.scene.resetCamera();
         break;
     }

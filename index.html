@@ -12,6 +12,8 @@
     { "imports": { "three": "./js/vendor/three.module.js", "three/addons/": "./js/vendor/three/addons/" } }
   </script>
 <script src="browser-guard.js"></script>
+<script src="starhermit-sdk.js"></script>
+<script>window.StarHermit && StarHermit.init();</script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to game interface</a>
@@ -58,6 +60,8 @@
           <button id="btn-title-journey" class="btn" type="button">Journey</button>
           <button id="btn-title-help" class="btn" type="button">How to Play</button>
           <button id="btn-title-settings" class="btn" type="button">Settings</button>
+          <button id="btn-signin" class="btn" type="button" hidden>Sign in with StarHermit</button>
+          <button id="btn-invite" class="btn" type="button" hidden>Invite a friend</button>
         </div>
         <p class="profile-line">
           Playing as

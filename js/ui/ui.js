@@ -28,6 +28,8 @@ export class UI {
       bootStatus: $('boot-status'),
       bootProgress: $('boot-progress'),
       titleName: $('btn-profile-name'),
+      btnSignIn: $('btn-signin'),
+      btnInvite: $('btn-invite'),
       titleOnline: $('title-online'),
       titleOffline: $('title-offline'),
       titleSync: $('title-sync'),
@@ -176,6 +178,8 @@ export class UI {
     $('btn-title-help').addEventListener('click', () => this.showScreen('help'));
     $('btn-title-settings').addEventListener('click', () => this.openPause({ settingsOnly: true }));
     this.el.titleName.addEventListener('click', () => this.a.profileRename());
+    this.el.btnSignIn.addEventListener('click', () => this.a.signIn());
+    this.el.btnInvite.addEventListener('click', () => this.a.invite());
     document.querySelectorAll('#mode-cards .card').forEach((card) => {
       card.addEventListener('click', () => this.a.modeSelected(card.dataset.mode));
     });
@@ -238,6 +242,19 @@ export class UI {
     this.el.titleSync.hidden = !sync;
     this.el.titleSync.textContent = sync ?? '';
     this.el.titleProgress.textContent = progressText;
+  }
+
+  /** StarHermit buttons: sign-in (platform host, no token) and invite (signed in). */
+  setPlatformButtons({ signIn, invite, t }) {
+    this.el.btnSignIn.hidden = !signIn;
+    this.el.btnInvite.hidden = !invite;
+    this.el.btnSignIn.textContent = t('signIn');
+    this.el.btnInvite.textContent = t('invite');
+  }
+
+  setControlsHelp(text) {
+    const node = document.getElementById('help-controls');
+    if (node) node.textContent = text;
   }
 
   setModeMeta({ journey, daily }) {

@@ -193,25 +193,28 @@ No module may mutate rules state except through a validated command. Rendering c
 
 ### Packaging and launch
 - Ship a browser distribution with `starhermit.txt` at its root, `name=Trio Tiles`, and `launch=index.html`. Keep source files, secrets, design documents, and source maps outside the uploaded distribution.
-- Read the game scope from the short-lived launch token rather than hard-coding a slug. The token arrives in the URL fragment (`#game_token=<jwt>`), is read once, and is stripped from the location bar; query/global fallbacks are local-dev only. Send it as `Authorization: Bearer` on every same-origin `/api` call; re-mint it every 45 min via `POST /api/v1/games/{slug}/launch-token`. Never persist access or launch tokens in local storage.
-- Synchronize countdowns and daily boundaries with `GET /api/v1/time` using round-trip-adjusted offset. Treat rate limits and structured `{"error":"..."}` responses as recoverable UI states.
+- `index.html` loads the canonical `starhermit-sdk.js` (unmodified copy of `tools/starhermit-sdk.js`) and calls `StarHermit.init()` before any module runs. The SDK reads `#game_token=` / `#access_token=`, strips it from the URL, takes the slug from the `game_scope` claim and renews the launch token; tokens never reach local storage. `js/platform/host.js` wraps the SDK and keeps the game's adapter API.
+- Without a token the game makes no network calls at all: daily seeds are computed locally (same UTC-day algorithm), boards are local bests. When renewal is refused the game captions "signed out", re-offers sign-in and keeps playing locally.
+- Hosted, countdowns and daily boundaries use `GET /api/v1/time` with a round-trip-adjusted offset; failures fall back to the local clock.
 
 ### Identity, profile, presence, and preferences
-- Support guest practice locally, then offer account sign-in for durable progress. Hosted play shows the account nickname from `GET /api/v1/users/{sub}/profile` (never the username; `GET /api/v1/me` is forbidden for launch tokens) in the title profile slot; local rename remains a guest/offline feature. Honor profile privacy. Presence heartbeats are sent only to the game's own dev server, never on-platform.
-- Store accessibility, audio, graphics tier, tutorial completion, camera preference, and rules options through per-game settings. Declare desktop action bindings and read player overrides; touch mappings remain responsive UI controls.
-- Cloud-save progression as a versioned, checksummed document mirrored to the platform slot `GET/PUT /api/v1/me/cloud-saves/{slug}` (zip+base64, debounced ~2 s with a pagehide flush). localStorage remains the offline cache of record; on conflict the remote document wins. Never place credentials or private chat in saves.
+- Guests play locally under a renameable local name. On `*.starhermit.com` without a token the title shows **Sign in with StarHermit**; it is hidden when signed in and when running locally.
+- Signed in, the title profile slot shows the profile nickname (fallback `Player <id prefix>`), and **Invite a friend** copies `StarHermit.inviteLink()` to the clipboard with a caption confirmation. Sign-in/invite strings are localized in all nine locales.
+- Every preference in Settings (audio levels, mute, captions, graphics, reduced motion, high contrast, palette, larger text, left-handed, hold-to-confirm, timing assist, haptics, camera view, telemetry consent, theme) is mirrored to the per-game settings KV on change; on start the platform values win over local ones.
+- Keyboard actions are declared as `control.*` lines in `starhermit.txt` (focus left/right/up/down, pick, undo, hint, camera, pause). The game routes `keydown` by `event.code` through `StarHermit.loadBindings`, and How to Play lists the effective keys. Touch mappings remain responsive UI controls.
+- The whole checksummed save document is cloud-saved in the `game:<slug>` slot: loaded remote-first on boot (on conflict the remote document wins), mirrored on every local save (debounced ~2 s), flushed on `pagehide`/hidden. localStorage remains the offline cache.
 
 ### Discovery, activity, and social layer
-- Start and end launch activity so playtime is accurate on the game's own dev server; hosted mode makes no activity/telemetry calls (the platform exposes no per-game routes for them). Surface entitlement or catalog state only in host-owned chrome; the game itself must remain playable without promotional interruption.
-- Provide a compact friends panel for score comparison and invitations where appropriate. Respect presence visibility and do not expose a hidden or private profile through game UI.
-- Do not create gameplay chat or voice surfaces for the initial release; they are not relevant to the core solo loop. Friends-only leaderboard filtering and shareable challenge seeds supply the social layer without unnecessary communication permissions.
+- The game sends no presence, activity or telemetry calls (no route is reachable with a launch token). Entitlement or catalog state belongs to host-owned chrome; the game stays playable without promotional interruption.
+- The invite link is the social entry point; friends-only leaderboard filtering is offered on the platform board.
+- No gameplay chat or voice: they are not relevant to the core solo loop.
 
 ### Achievements and leaderboards
 - Declare a small static achievement set: first completion, mechanic mastery, a sustained streak, a difficult content milestone, and an accessibility-neutral long-term goal. Keys are stable, lowercase identifiers; unlocks are idempotent and local-only (a pure browser game has no server-authoritative unlock path); they ride in the cloud-saved document.
-- Provide global and friends-filtered boards for the primary metric plus a fair daily/weekly board. Clients never submit scores: the platform owns the global leaderboard, read via `GET /api/v1/games/{slug}` → `GET /api/v1/leaderboards/{leaderboardId}/entries`, and the game keeps personal bests locally (local boards) and in the cloud-saved document. On the game's own dev server, boards are replay-validated through a lightweight script using replayable input logs and deterministic seeds; if validation is unavailable there, the board is labeled casual and plausibility/rate checks apply.
+- Provide global and friends-filtered boards for the primary metric plus a fair daily/weekly board. Clients never submit scores: the platform owns the global leaderboard, read via `StarHermit.leaderboard()` (friends filter passes `scope=friends`), and the game keeps personal bests locally and in the cloud-saved document. The game's own `server.js` still offers replay-validated boards for its dev deployment, but the client no longer calls it.
 
 ### Sessions and transport
-- The initial game is solo. The shipped `server.js` remains the game's own dev backend (seeded daily descriptors, replay validation, durable daily sessions); ordinary practice runs locally and offline after initial load, and hosted mode calls only documented platform routes.
+- The initial game is solo. The shipped `server.js` remains the game's own dev backend (seeded daily descriptors, replay validation, durable daily sessions) and is not a platform game script, so there are no platform sessions, matchmaking, achievements or replays; the client calls only platform routes, and only when hosted.
 - A daily session records content version, seed, settings affecting difficulty, an ordered input log, score components, and final checksum. Reconnect from the durable session snapshot rather than trusting cached client state.
 - Realtime rooms, peer relay, matchmaking, backfill, and voice are intentionally not used because they add no value to this ruleset.
 
