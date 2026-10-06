@@ -438,10 +438,12 @@ export class UI {
   openPause({ settingsOnly = false } = {}) {
     this.el.pauseOverlay.hidden = false;
     this._settingsOnly = settingsOnly;
+    // opened from the title it is a settings sheet, not a pause screen
+    $('pause-h').textContent = settingsOnly ? 'Settings' : 'Paused';
     $('btn-resume').textContent = settingsOnly ? 'Done' : 'Resume';
     $('btn-leave').hidden = settingsOnly;
     $('btn-pause-help').hidden = settingsOnly;
-    (settingsOnly ? this.el.settingsForm.querySelector('input,select') : $('btn-resume')).focus();
+    (settingsOnly ? this.el.settingsForm.querySelector('input,select') : $('btn-resume')).focus({ preventScroll: true });
   }
 
   closePause() {
