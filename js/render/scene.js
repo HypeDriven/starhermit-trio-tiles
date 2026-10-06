@@ -26,6 +26,7 @@ import {
   createTrayBaseGeometry,
   createSlotGeometry,
   mergeGeometries,
+  TILE_SIZE,
   TILE_THICK,
   LAYER_HEIGHT,
 } from './geometry.js';
@@ -811,18 +812,126 @@ export class TeaScene {
       if (this.steam) this.steam.material.uniforms.uScale.value = h * ratio * 0.5;
     }
     const anchor = this.rig.anchorForAspect(w / h, this._cameraPreference ?? 'default');
-    if (anchor !== this.rig.anchor && !this._anchorLocked) this.rig.setAnchor(anchor);
+    // Re-frame on every resize: the play area's fit depends on aspect and HUD.
+    this._aim(anchor !== this.rig.anchor && !this._anchorLocked ? anchor : this.rig.anchor);
   }
 
   setCameraPreference(pref) {
     this._cameraPreference = pref;
     this._anchorLocked = false;
-    this.rig.setAnchor(this.rig.anchorForAspect(this.camera.aspect, pref));
+    this._aim(this.rig.anchorForAspect(this.camera.aspect, pref));
   }
 
   resetCamera() {
     this._anchorLocked = false;
-    this.rig.setAnchor(this.rig.anchorForAspect(this.camera.aspect, this._cameraPreference ?? 'default'));
+    this._aim(this.rig.anchorForAspect(this.camera.aspect, this._cameraPreference ?? 'default'));
+  }
+
+  // -------------------------------------------------------------------------
+  // Play-area framing
+  // -------------------------------------------------------------------------
+
+  /**
+   * `fn()` returns the HUD elements that cover the canvas during play (the
+   * play area — board + tray — is framed in the rectangle they leave free),
+   * or null off the play screen (authored anchor framing).
+   */
+  setFramingChrome(fn) {
+    this._chromeFn = fn;
+  }
+
+  /** Recompute the framing for the current anchor (HUD or board changed). */
+  reframe() {
+    this._aim(this.rig.anchor);
+  }
+
+  _aim(name) {
+    this.rig.setAnchor(name, this._frameFor(name));
+  }
+
+  /**
+   * Lens frame for anchor `name`: board + tray fill the canvas left free by
+   * the HUD (identity off the play screen and for the win close-up). Full-
+   * width bands and full-height rails are always kept clear; smaller corner
+   * pieces only when the framed board or tray would end up beneath them.
+   */
+  _frameFor(name) {
+    const chrome = this._chromeFn?.();
+    if (!chrome || !this._fitGroups || name === 'win') return null;
+    const W = this.canvas.clientWidth || window.innerWidth;
+    const H = this.canvas.clientHeight || window.innerHeight;
+    this._fitCam ??= new THREE.PerspectiveCamera();
+    const groups = this._fitGroups.map((g) => CameraRig.projectBounds(name, g, this.camera.aspect, this._fitCam));
+    const all = groups.reduce((u, b) => ({
+      x0: Math.min(u.x0, b.x0), x1: Math.max(u.x1, b.x1), y0: Math.min(u.y0, b.y0), y1: Math.max(u.y1, b.y1),
+    }));
+    const ins = { t: 0, b: 0, l: 0, r: 0 };
+    const pieces = [];
+    for (const el of chrome) {
+      const r = el.getBoundingClientRect();
+      const p = { x0: Math.max(0, r.left), x1: Math.min(W, r.right), y0: Math.max(0, r.top), y1: Math.min(H, r.bottom) };
+      if (p.x1 - p.x0 < 1 || p.y1 - p.y0 < 1) continue;
+      if (p.x1 - p.x0 > W * 0.5) this._inset(ins, p, W, H, 'v'); // top/bottom band
+      else if (p.y1 - p.y0 > H * 0.5) this._inset(ins, p, W, H, 'h'); // side rail
+      else pieces.push(p);
+    }
+    const m = Math.round(Math.min(W, H) * 0.025); // breathing room
+    const toNdc = (r) => ({ x0: (2 * r.x0) / W - 1, x1: (2 * r.x1) / W - 1, y0: 1 - (2 * r.y1) / H, y1: 1 - (2 * r.y0) / H });
+    let frame = null;
+    for (let pass = 0, passes = pieces.length; pass <= passes; pass++) {
+      const x0 = ins.l + m, x1 = W - ins.r - m, y0 = ins.t + m, y1 = H - ins.b - m;
+      if (x1 - x0 < W * 0.3 || y1 - y0 < H * 0.3) return frame;
+      frame = CameraRig.frameFor(all, toNdc({ x0, x1, y0, y1 }));
+      const hit = pieces.find((p) => {
+        const q = toNdc(p);
+        return groups.some((g) => {
+          const s = CameraRig.framed(g, frame);
+          return s.x0 < q.x1 && s.x1 > q.x0 && s.y0 < q.y1 && s.y1 > q.y0;
+        });
+      });
+      if (!hit) return frame;
+      pieces.splice(pieces.indexOf(hit), 1);
+      // Give up whichever axis costs less of the screen.
+      const midX = (hit.x0 + hit.x1) / 2, midY = (hit.y0 + hit.y1) / 2;
+      const costV = (midY < H / 2 ? hit.y1 : H - hit.y0) / H;
+      const costH = (midX < W / 2 ? hit.x1 : W - hit.x0) / W;
+      this._inset(ins, hit, W, H, costV <= costH ? 'v' : 'h');
+    }
+    return frame;
+  }
+
+  _inset(ins, p, W, H, axis) {
+    if (axis === 'v') {
+      if ((p.y0 + p.y1) / 2 < H / 2) ins.t = Math.max(ins.t, p.y1);
+      else ins.b = Math.max(ins.b, H - p.y0);
+    } else if ((p.x0 + p.x1) / 2 < W / 2) ins.l = Math.max(ins.l, p.x1);
+    else ins.r = Math.max(ins.r, W - p.x0);
+  }
+
+  /** World boxes framed in play: the level's tiles (at their highest lift) and the tray. */
+  _computeFitBox(level) {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, top = 0;
+    const half = TILE_SIZE / 2 + 0.05;
+    const bz = this.boardGroup.position.z;
+    for (const t of level.tiles) {
+      const x = t.gx / 2 - this.boardOffset.x;
+      const z = t.gy / 2 - this.boardOffset.y + bz;
+      x0 = Math.min(x0, x - half); x1 = Math.max(x1, x + half);
+      z0 = Math.min(z0, z - half); z1 = Math.max(z1, z + half);
+      top = Math.max(top, 0.05 + t.z * LAYER_HEIGHT + TILE_THICK);
+    }
+    const pad = 0.25;
+    const box = (ax, bx, ay, by, az, bz2) => {
+      const out = [];
+      for (const x of [ax - pad, bx + pad]) for (const y of [ay, by]) for (const z of [az - pad, bz2 + pad]) out.push(new THREE.Vector3(x, y, z));
+      return out;
+    };
+    // Tray: 7 slots × 1.06 + rim wide, 1.35 deep, centred at z 3.65.
+    const tw = (7 * 1.06 + 0.5) / 2 + 0.06;
+    this._fitGroups = [
+      box(x0, x1, 0, top + 0.35 /* hover/selection lift */, z0, z1),
+      box(-tw, tw, 0, 0.6, 3.65 - 0.74, 3.65 + 0.74),
+    ];
   }
 
   // -------------------------------------------------------------------------
@@ -900,6 +1009,8 @@ export class TeaScene {
       maxY = Math.max(maxY, t.gy);
     }
     this.boardOffset = { x: (minX + maxX) / 4, y: (minY + maxY) / 4 }; // half-units→world /2, center
+    this._computeFitBox(level);
+    this.reframe();
     for (const t of level.tiles) {
       const mesh = new THREE.Mesh(this.tileGeometry, null);
       mesh.castShadow = true;
@@ -1080,7 +1191,7 @@ export class TeaScene {
 
   _loseSequence() {
     this._anchorLocked = true;
-    this.rig.setAnchor('top');
+    this._aim('top');
     this.rig.shake(1);
   }
 

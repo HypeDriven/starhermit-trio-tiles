@@ -113,6 +113,7 @@ class App {
       onContextLost: () => this._onContextLost(),
     });
     this._refreshGraphicsPanel();
+    this._bindFraming();
     this._bindInputs();
 
     this.ui.boot(4, 4, 'Contacting the host…');
@@ -882,6 +883,19 @@ class App {
     this.ui.renderGraphics(this._graphicsSaved(), this.scene?.graphicsInfo(this.ui.gfxT.words));
   }
 
+  /** Frame the board + tray in the part of the canvas the play HUD leaves free. */
+  _bindFraming() {
+    const $ = (id) => document.getElementById(id);
+    const play = $('screen-play');
+    const parts = [play.querySelector('.hud-top'), play.querySelector('.hud-bottom'), $('board-mirror').querySelector('summary'), $('tutorial-banner')];
+    this.scene.setFramingChrome(() => (play.hidden ? null : parts));
+    if (!this._framingObserver && typeof ResizeObserver === 'function') {
+      // Fires when the HUD appears/disappears or changes size (wrapping, banner).
+      this._framingObserver = new ResizeObserver(() => this.scene?.reframe());
+      for (const el of [play, ...parts]) this._framingObserver.observe(el);
+    }
+  }
+
   _onContextLost() {
     this.ui.error('Graphics context lost — rebuilding the table.');
     try {
@@ -895,6 +909,7 @@ class App {
         colorblindPalette: this.store.settings.colorblindPalette,
         onContextLost: () => this._onContextLost(),
       });
+      this._bindFraming();
       if (level && state) this.scene.buildBoard(level, state);
     } catch {
       this.ui.showScreen('nogl');

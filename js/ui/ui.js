@@ -399,6 +399,9 @@ export class UI {
   // -------------------------------------------------------------------------
 
   results({ won, reasonText, breakdown, stars, achievements, boardLine, nextLabel }) {
+    // The round-end cue caption ("table cleared — you win") is now the panel
+    // heading; drop it so it never sits over the score table or buttons.
+    this.clearCaption();
     this.el.resultsH.textContent = won ? 'Table cleared' : 'Round over';
     this.el.resultsSub.textContent = reasonText;
     const rows = this.el.resultsRows;
@@ -498,6 +501,11 @@ export class UI {
 
   error(text) {
     this.announce('errors', text);
+  }
+
+  clearCaption() {
+    clearTimeout(this._captionTimer);
+    this.el.captions.textContent = '';
   }
 
   caption(text) {

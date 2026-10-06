@@ -16,21 +16,24 @@ export const CAMERA_ANCHORS = {
 };
 
 function dampedSpring(current, target, velocity, omega, dt) {
-  // Critically damped: x'' = -2ζω v - ω² (x - target), ζ = 1.
-  const f = 1 + omega * dt;
+  // Critically damped: x'' = -2ζω v - ω² (x - target), ζ = 1, integrated
+  // implicitly (stable at any dt). The previous closed form dropped the
+  // -ω²dt²·x term, so the camera settled ~10 % past its target, by an amount
+  // that depended on the frame rate.
   const det = 1 + omega * dt * 2 + omega * omega * dt * dt;
-  const newX = (current * f * f + target * omega * omega * dt * dt + velocity * dt * f) / det;
-  const newV = (velocity - omega * omega * dt * (current - target) - omega * velocity * dt) / f;
-  return [newX, newV];
+  const newV = (velocity - omega * omega * dt * (current - target)) / det;
+  return [current + newV * dt, newV];
 }
 
 export class CameraRig {
   constructor(camera) {
     this.camera = camera;
     this.anchor = 'wide';
-    this.target = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 38 };
-    this.current = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 38 };
-    this.velocity = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 0 };
+    // `frame` = lens shift + zoom (see setAnchor): {z, x, y}.
+    this.target = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 38, frame: { z: 1, x: 0, y: 0 } };
+    this.current = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 38, frame: { z: 1, x: 0, y: 0 } };
+    this.velocity = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 0, frame: { z: 0, x: 0, y: 0 } };
+    this._applied = { z: 1, x: 0, y: 0 };
     this.omega = 3.2; // spring stiffness: quick but calm
     this.shakeAmp = 0;
     this.shakeTime = 0;
@@ -40,21 +43,30 @@ export class CameraRig {
     this.snap('wide');
   }
 
-  setAnchor(name) {
+  /**
+   * Aim at an authored anchor. `frame` frames the play area inside the
+   * HUD-free part of the screen without moving the authored camera: the
+   * rendered window is the anchor's view scaled by `z` around the
+   * anchor-view NDC point (x, y) (an off-axis lens shift via setViewOffset).
+   */
+  setAnchor(name, frame = null) {
     const a = CAMERA_ANCHORS[name];
     if (!a) return;
     this.anchor = name;
     this.target.pos.fromArray(a.pos);
     this.target.look.fromArray(a.look);
     this.target.fov = a.fov;
+    this.target.frame = frame ? { ...frame } : { z: 1, x: 0, y: 0 };
   }
 
   /** Instant placement (also used by reduced-motion and fast-forward). */
-  snap(name = this.anchor) {
-    this.setAnchor(name);
+  snap(name = this.anchor, frame = null) {
+    this.setAnchor(name, frame);
     this.current.pos.copy(this.target.pos);
     this.current.look.copy(this.target.look);
     this.current.fov = this.target.fov;
+    this.current.frame = { ...this.target.frame };
+    this.velocity.frame = { z: 0, x: 0, y: 0 };
     this.velocity.pos.set(0, 0, 0);
     this.velocity.look.set(0, 0, 0);
     this.velocity.fov = 0;
@@ -88,6 +100,15 @@ export class CameraRig {
     let vf = this.velocity.fov;
     [this.current.fov, vf] = dampedSpring(this.current.fov, this.target.fov, vf, w, dt);
     this.velocity.fov = vf;
+    for (const k of ['z', 'x', 'y']) {
+      [this.current.frame[k], this.velocity.frame[k]] = dampedSpring(
+        this.current.frame[k],
+        this.target.frame[k],
+        this.velocity.frame[k],
+        w,
+        dt,
+      );
+    }
     this._apply(dt);
   }
 
@@ -104,10 +125,69 @@ export class CameraRig {
     this.camera.position.set(this.current.pos.x + ox, this.current.pos.y + oy, this.current.pos.z);
     this._tmp.copy(this.current.look);
     this.camera.lookAt(this._tmp);
+    const f = this.current.frame;
+    const ap = this._applied;
+    const frameMoved = Math.abs(f.z - ap.z) > 1e-4 || Math.abs(f.x - ap.x) > 1e-5 || Math.abs(f.y - ap.y) > 1e-5;
+    if (frameMoved) {
+      this._applied = { ...f };
+      if (Math.abs(f.z - 1) < 1e-4 && Math.abs(f.x) < 1e-5 && Math.abs(f.y) < 1e-5) {
+        this.camera.clearViewOffset();
+      } else {
+        // Virtual full frame = the anchor's view (2×2 NDC units, x scaled by
+        // the aspect because setViewOffset derives the aspect from it);
+        // render the window of size 2/z centred on (x, y).
+        const s = 2 / f.z;
+        const A = this.camera.aspect;
+        this.camera.setViewOffset(2 * A, 2, (f.x + 1 - s / 2) * A, 1 - f.y - s / 2, s * A, s);
+      }
+    }
     if (Math.abs(this.camera.fov - this.current.fov) > 0.01) {
       this.camera.fov = this.current.fov;
       this.camera.updateProjectionMatrix();
     }
+  }
+
+  /** NDC bounds of world points seen from anchor `name` at `aspect` (no lens frame). */
+  static projectBounds(name, points, aspect, cam = new THREE.PerspectiveCamera()) {
+    const a = CAMERA_ANCHORS[name];
+    cam.fov = a.fov;
+    cam.aspect = aspect;
+    cam.near = 0.1;
+    cam.far = 200;
+    cam.clearViewOffset();
+    cam.position.fromArray(a.pos);
+    cam.lookAt(new THREE.Vector3().fromArray(a.look));
+    cam.updateMatrixWorld();
+    cam.updateProjectionMatrix();
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    const v = new THREE.Vector3();
+    for (const p of points) {
+      v.copy(p).project(cam);
+      x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x);
+      y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y);
+    }
+    return { x0, x1, y0, y1 };
+  }
+
+  /**
+   * Frame that maps the NDC rect `b` (from projectBounds) onto the NDC rect
+   * `safe` ({x0, x1, y0, y1}), as large as fits. Zoom is clamped so tiny or
+   * odd boxes never produce extreme views.
+   */
+  static frameFor(b, safe) {
+    const hx = (b.x1 - b.x0) / 2, hy = (b.y1 - b.y0) / 2;
+    const sw = (safe.x1 - safe.x0) / 2, sh = (safe.y1 - safe.y0) / 2;
+    if (!(hx > 0 && hy > 0 && sw > 0 && sh > 0)) return { z: 1, x: 0, y: 0 };
+    const z = Math.min(3, Math.max(0.3, Math.min(sw / hx, sh / hy)));
+    // Content centre c must land on safe centre s: (c - window) · z = s.
+    const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+    const sx = (safe.x0 + safe.x1) / 2, sy = (safe.y0 + safe.y1) / 2;
+    return { z, x: cx - sx / z, y: cy - sy / z };
+  }
+
+  /** Screen NDC rect of anchor-NDC rect `b` under lens frame `f`. */
+  static framed(b, f) {
+    return { x0: (b.x0 - f.x) * f.z, x1: (b.x1 - f.x) * f.z, y0: (b.y0 - f.y) * f.z, y1: (b.y1 - f.y) * f.z };
   }
 
   /** Fit anchor choice to the viewport aspect. */

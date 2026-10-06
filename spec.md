@@ -129,6 +129,8 @@ The subject is the active playfield at near-tabletop to room scale, framed so st
 - Camera transitions use authored duration/easing or critically damped springs and remain interruptible. Never animate by cumulative per-frame lerp.
 - Decorative motion is paused or reduced when hidden. Gameplay animation derives from simulation state and interpolation alpha, not frame count.
 - Camera shake is low-amplitude, event-tiered, disabled by reduced motion, and never changes raycast truth.
+- Play framing: the authored anchors keep their position and angle, and a lens shift + zoom (`setViewOffset`) fits the level's board and the tray into the part of the canvas that the play HUD leaves free. Full-width bars and side rails are always kept clear, and small corner pieces such as the collapsed board mirror only when the board or tray would sit under them. Framing is re-fitted on resize, on a new level and whenever HUD chrome changes size. It springs with the camera and is off on the title and for the win close-up.
+- The round-end cue caption is cleared when the results panel opens.
 
 ### Graphics-skill routing
 
