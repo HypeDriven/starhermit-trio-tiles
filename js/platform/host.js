@@ -45,18 +45,21 @@ export class HostPlatform {
 
   /** Boot handshake: identity, cloud save and clock — only when hosted. */
   async init() {
+    if (this.scope.hosted) {
+      this.online = true;
+      await this.syncTime();
+      await this.loadProfile();
+      await this._loadCloud();
+    }
+    // A fresh guest id is persisted only after the cloud compare: save() stamps
+    // updatedAt, which would make a fresh device's empty doc beat a newer cloud save.
     this.playerId = this.store.doc.profile.guestId;
     if (!this.playerId) {
       this.playerId = 'g-' + Math.random().toString(36).slice(2, 14);
       this.store.doc.profile.guestId = this.playerId;
       this.store.save();
     }
-    if (!this.scope.hosted) return;
-    this.online = true;
-    await this.syncTime();
-    await this.loadProfile();
-    await this._loadCloud();
-    this._initCloudMirror();
+    if (this.scope.hosted) this._initCloudMirror();
   }
 
   // -------------------------------------------------------------------------
