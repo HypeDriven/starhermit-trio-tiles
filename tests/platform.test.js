@@ -114,5 +114,29 @@ test('standalone: no token means no fetch at all', async () => {
   await host.leaderboard('daily');
   await host.loadBindings({ undo: ['KeyU'] });
   assert.equal(host.canSignIn(), false);
+  assert.deepEqual(await host.submitScore(800), { posted: false, rank: null });
   assert.equal(srv.calls.length, 0);
+});
+
+test('hosted: submitScore posts high-score and reads the rank', async () => {
+  const srv = stubServer();
+  const sh = loadSdk().create({ window: fakeWindow('#game_token=' + JWT), fetch: srv.fetch, ...noTimers });
+  sh.init();
+  const host = new HostPlatform(new SaveStore(memStorage()), sh);
+  const sent = [];
+  sh.submitScores = async (sc) => { sent.push(sc); return Object.keys(sc); };
+  sh.leaderboard = async (key) => ({ items: key === 'high-score' ? [{ userId: USER, rank: 9 }] : [] });
+  assert.deepEqual(await host.submitScore(1777.5), { posted: true, rank: 9 });
+  assert.deepEqual(sent, [{ 'high-score': 1778 }]);
+  sh.submitScores = async () => [];
+  assert.deepEqual(await host.submitScore(3), { posted: false, rank: null });
+});
+
+test('leaderboard line strings in every locale', async () => {
+  const { PLATFORM_STRINGS, platformStrings } = await import('../js/ui/platform-strings.js');
+  assert.equal(Object.keys(PLATFORM_STRINGS).length, 9);
+  for (const l of Object.keys(PLATFORM_STRINGS)) {
+    for (const k of ['lbPosting', 'lbRank', 'lbPosted', 'lbNotPosted']) assert.ok(PLATFORM_STRINGS[l][k], l + ' ' + k);
+    assert.match(platformStrings(l)('lbRank', { rank: 4 }), /#4/, l);
+  }
 });

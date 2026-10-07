@@ -677,12 +677,15 @@ class App {
     const unlocked = this._checkAchievements();
     this.host.track('round_end', { mode, status: result.status });
 
-    // Ranked boards are platform-owned: clients never submit scores. The
-    // local best is recorded above; the global board is viewed in Score Chase.
-    const boardLine =
-      mode === 'practice' || mode === 'learn'
-        ? 'Unranked round — local best recorded.'
-        : 'Local best recorded — global boards are recorded by the platform (see Score Chase).';
+    // The local best is recorded above. Signed in, a ranked round (not
+    // practice or lessons) also posts its score to the platform board and the
+    // results line shows the rank; the global board is viewed in Score Chase.
+    const ranked = mode !== 'practice' && mode !== 'learn';
+    const postLb = ranked && this.host.scope.hosted;
+    const boardLine = postLb ? this.pt('lbPosting')
+      : !ranked ? 'Unranked round — local best recorded.'
+        : 'Local best recorded on this device.';
+    const lbPost = postLb ? this.host.submitScore(result.score) : null;
 
     const breakdown = scoreBreakdown(state);
     const stars = won && level.star ? starsFor(result.score, level.star) : 0;
@@ -702,6 +705,11 @@ class App {
         achievements: unlocked,
         boardLine,
         nextLabel: mode === 'journey' && won ? 'Next stage' : 'Continue',
+      });
+      lbPost?.then((r) => {
+        if (this.session !== completedSession || this.phase !== 'results') return;
+        this.ui.el.resultsBoard.textContent = !r.posted ? this.pt('lbNotPosted')
+          : r.rank ? this.pt('lbRank', { rank: r.rank }) : this.pt('lbPosted');
       });
     }, won ? 1200 : 700);
   }

@@ -150,8 +150,25 @@ export class HostPlatform {
   dailySessionSave(_payload) {}
 
   // -------------------------------------------------------------------------
-  // Leaderboards — read-only on-platform
+  // Leaderboards — platform board reads and the finished-round score post
   // -------------------------------------------------------------------------
+
+  /**
+   * Post a finished ranked round's score to the `high-score` board
+   * (score-script.js); resolves { posted, rank } — the player's rank there, or
+   * null. Not hosted → not posted, no request.
+   */
+  async submitScore(score) {
+    if (!this.scope.hosted || typeof this.sh?.submitScores !== 'function') return { posted: false, rank: null };
+    let keys = [];
+    try { keys = await this.sh.submitScores({ 'high-score': Math.max(0, Math.round(score)) }); } catch { keys = []; }
+    if (!keys.includes('high-score')) return { posted: false, rank: null };
+    try {
+      const r = await this.sh.leaderboard('high-score', { pageSize: 100 });
+      const me = (r.items ?? []).find((i) => i.userId === this.sh.userId);
+      return { posted: true, rank: me ? me.rank : null };
+    } catch { return { posted: true, rank: null }; }
+  }
 
   async platformEntries({ friends = false, limit = 20 } = {}) {
     if (!this.scope.hosted) return null;
