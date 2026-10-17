@@ -8,12 +8,16 @@
  *   - identity: profile nickname (fallback "Player <id prefix>")
  *   - clock: GET /api/v1/time (round-trip adjusted)
  *   - cloud save: the whole SaveStore document in the `game:<slug>` slot,
- *     remote-first on boot (conflicts prefer remote), debounced mirror of
- *     every local save, flushed on pagehide
+ *     merged with this device's progress on boot, debounced mirror of every
+ *     local save (conditional on the version loaded), flushed on pagehide; a
+ *     write refused because another device saved first reloads, merges and
+ *     saves again
  *   - settings KV mirror, control bindings, invite share link
  *   - read-only platform leaderboard (clients never submit scores)
  *   - launch-token renewal (SDK); a refused renewal drops to local play
  */
+
+import { t } from '../ui/i18n.js';
 
 const API = '/api/v1';
 
@@ -32,7 +36,8 @@ export class HostPlatform {
     this.onAuthChange = null; // (signedIn) => void
     this._mirrorInstalled = false;
     if (sh) {
-      sh.on('saved', (ok) => this.scope.hosted && this._setSync(ok ? 'synced' : 'error'));
+      sh.on('saved', (ok) => this.scope.hosted && !sh.saveConflicted?.() && this._setSync(ok ? 'synced' : 'error'));
+      sh.on('saveconflict', () => this._onSaveConflict());
       sh.on('auth', (e) => {
         if (e?.signedIn) return;
         this.scope.hosted = false;
@@ -59,7 +64,11 @@ export class HostPlatform {
       this.store.doc.profile.guestId = this.playerId;
       this.store.save();
     }
-    if (this.scope.hosted) this._initCloudMirror();
+    if (this.scope.hosted) {
+      this._initCloudMirror();
+      // This device had progress the cloud copy lacks: write the merge back.
+      if (this._cloudNeedsWrite) this.store.save();
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -227,24 +236,44 @@ export class HostPlatform {
     if (!this.scope.hosted) return null;
     switch (this.syncState) {
       case 'saving':
-        return 'saving…';
+        return t('syncSaving');
       case 'synced':
-        return 'cloud synced';
+        return t('syncSynced');
       case 'error':
-        return 'sync unavailable';
+        return t('syncError');
       default:
-        return 'offline';
+        return t('syncOffline');
     }
   }
 
   async _loadCloud() {
     const doc = await this.sh.loadJSON();
-    if (doc) {
-      const verdict = this.store.mergeRemote(doc);
-      // Platform contract: on conflict prefer the remote document.
-      if (verdict.status === 'conflict') this.store.resolveConflict('remote');
+    // Merge rather than let either copy win: neither device's progress is dropped.
+    if (doc) this._cloudNeedsWrite = this.store.mergeCloud(doc).changed;
+    this._setSync(this.sh.saveLoadFailed?.() ? 'error' : 'synced');
+  }
+
+  /**
+   * Another device saved since our load, so the SDK refused the conditional
+   * write: reload the cloud copy (which lifts the write block), merge it with
+   * this device's progress (the in-round state stays this device's) and save
+   * the merged document.
+   */
+  async _onSaveConflict() {
+    if (this._resolvingConflict) return;
+    this._resolvingConflict = true;
+    this._setSync('saving');
+    try {
+      const doc = await this.sh.loadJSON();
+      if (doc) this.store.mergeCloud(doc);
+      if (this.scope.hosted && !this.sh.saveConflicted?.()) {
+        this.store.save(); // mirrored to the cloud slot
+        await this.sh.flushSave();
+      }
+      this.onCloudMerged?.();
+    } finally {
+      this._resolvingConflict = false;
     }
-    this._setSync('synced');
   }
 
   async _flushCloudSave(keepalive = false) {

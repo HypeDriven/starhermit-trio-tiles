@@ -7,10 +7,10 @@
  * never mutate rules state (spec §5 module rule).
  */
 
-import { SYMBOL_NAMES } from '../rules/layout.js';
 import { symbolColor } from '../render/materials.js';
 import { CATEGORIES, PRESETS, presetTier, choosePreset } from '../render/gfx.js';
 import { gfxStrings } from './gfx-strings.js';
+import { t, locale, symbolName, themeName } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -72,23 +72,44 @@ export class UI {
       liveResults: $('live-results'),
     };
     this._captionTimer = null;
-    this.gfxT = gfxStrings();
+    this.gfxT = gfxStrings(locale());
     this._gfxSaved = {};
     this._buildGraphics();
     this._bind();
+  }
+
+  /**
+   * Language changed: static markup was re-applied by i18n.js; relabel the
+   * Graphics controls and the text this class builds from state. Main re-renders
+   * the screens it composes (title, setup, HUD objective, results).
+   */
+  relocalize() {
+    this.gfxT = gfxStrings(locale());
+    this._labelGraphics();
+    if (this.isPauseOpen()) this._labelPause();
+    if (this._lastState) this.updateHud(this._lastState, this._lastLevel);
   }
 
   // -------------------------------------------------------------------------
   // Graphics section (quality preset, render scale, per-category overrides)
   // -------------------------------------------------------------------------
 
-  _buildGraphics() {
+  /** Graphics labels and tier names in the current locale (controls are built once). */
+  _labelGraphics() {
     const t = this.gfxT;
     $('gfx-legend').textContent = t.graphics;
     $('gfx-l-quality').textContent = t.quality;
     $('gfx-l-scale').textContent = t.renderScale;
     $('gfx-l-adaptive').textContent = t.adaptive;
     $('gfx-l-fps').textContent = t.showFps;
+    for (const [cat, sel] of Object.entries(this._gfxCatSelects ?? {})) {
+      sel.previousElementSibling.textContent = t.categories[cat];
+      for (const o of sel.options) if (o.value !== 'preset') o.textContent = t.tiers[o.value];
+    }
+  }
+
+  _buildGraphics() {
+    const t = this.gfxT;
     const wrap = $('gfx-categories');
     wrap.textContent = '';
     this._gfxCatSelects = {};
@@ -111,6 +132,7 @@ export class UI {
       wrap.appendChild(label);
       this._gfxCatSelects[cat] = sel;
     }
+    this._labelGraphics();
     const section = $('gfx-section');
     section.addEventListener('input', (e) => this._onGraphicsInput(e.target));
   }
@@ -245,11 +267,11 @@ export class UI {
   }
 
   /** StarHermit buttons: sign-in (platform host, no token) and invite (signed in). */
-  setPlatformButtons({ signIn, invite, t }) {
+  setPlatformButtons({ signIn, invite, t: pt }) {
     this.el.btnSignIn.hidden = !signIn;
     this.el.btnInvite.hidden = !invite;
-    this.el.btnSignIn.textContent = t('signIn');
-    this.el.btnInvite.textContent = t('invite');
+    this.el.btnSignIn.textContent = pt('signIn');
+    this.el.btnInvite.textContent = pt('invite');
   }
 
   setControlsHelp(text) {
@@ -266,7 +288,7 @@ export class UI {
    * Render a mode-setup list.
    * @param {object} spec { title, blurb, groups: [{heading?, items:[{id,label,meta?,stars?,disabled?,detail?}]}], extraHtml? }
    */
-  renderSetup(spec) {
+  renderSetup(spec, { rerender = false } = {}) {
     this.el.setupH.textContent = spec.title;
     this.el.setupBlurb.textContent = spec.blurb ?? '';
     const list = this.el.setupList;
@@ -297,25 +319,28 @@ export class UI {
       }
     }
     this.el.setupExtra.innerHTML = spec.extraHtml ?? '';
-    this.showScreen('setup');
+    if (!rerender) this.showScreen('setup');
   }
 
   // -------------------------------------------------------------------------
   // HUD
   // -------------------------------------------------------------------------
 
-  setObjective(text, sub = '') {
+  setObjective(text, sub = '', { quiet = false } = {}) {
     this.el.hudObjective.textContent = text;
     this.el.hudSub.textContent = sub;
-    this.announce('objective', sub ? `${text}. ${sub}` : text);
+    if (!quiet) this.announce('objective', sub ? `${text}. ${sub}` : text);
   }
 
   updateHud(state, level) {
-    this.el.hudProgress.textContent = `${state.tiles.length} tile${state.tiles.length === 1 ? '' : 's'}`;
+    this._lastState = state;
+    this._lastLevel = level;
+    const n = state.tiles.length;
+    this.el.hudProgress.textContent = n === 1 ? t('tilesOne') : t('tilesMany', { n });
     this.el.hudScore.textContent = String(state.score.total);
     // The 250 ms clock re-enters here constantly; announce only real changes
     // so screen readers are not spammed with identical score text.
-    const scoreMsg = `Score ${state.score.total}, ${state.tiles.length} tiles left, tray ${state.tray.length} of ${state.trayCapacity}`;
+    const scoreMsg = t('scoreAnnounce', { score: state.score.total, tiles: n, tray: state.tray.length, cap: state.trayCapacity });
     if (scoreMsg !== this._lastScoreMsg) {
       this._lastScoreMsg = scoreMsg;
       this.announce('score', scoreMsg);
@@ -325,14 +350,14 @@ export class UI {
     if (hasClock) {
       const left = Math.max(0, state.limits.timeLimitMs - state.elapsedMs);
       this.el.hudTimer.textContent = '⌛ ' + fmtMs(left);
-      this.el.hudTimer.setAttribute('aria-label', `time remaining ${fmtMs(left)}`);
+      this.el.hudTimer.setAttribute('aria-label', t('timeRemaining', { time: fmtMs(left) }));
     } else {
       this.el.hudTimer.textContent = fmtMs(state.elapsedMs);
-      this.el.hudTimer.setAttribute('aria-label', `elapsed ${fmtMs(state.elapsedMs)}`);
+      this.el.hudTimer.setAttribute('aria-label', t('elapsed', { time: fmtMs(state.elapsedMs) }));
     }
     const hasMoves = state.limits.moveLimit != null;
     this.el.hudMoves.hidden = !hasMoves;
-    if (hasMoves) this.el.hudMoves.textContent = `${state.moves}/${state.limits.moveLimit} moves`;
+    if (hasMoves) this.el.hudMoves.textContent = t('movesOf', { n: state.moves, max: state.limits.moveLimit });
     this.renderTray(state);
   }
 
@@ -345,16 +370,15 @@ export class UI {
       const entry = state.tray[i];
       slot.className = 'tray-slot' + (entry ? ' filled' : '') + (danger && !entry ? ' danger' : '');
       if (entry) {
-        slot.textContent = (SYMBOL_NAMES[entry.sym] ?? entry.sym).slice(0, 2);
+        slot.textContent = symbolName(entry.sym).slice(0, 2);
         slot.style.color = symbolColor(entry.sym, this._palette ?? 'default');
-        slot.title = SYMBOL_NAMES[entry.sym] ?? entry.sym;
+        slot.title = symbolName(entry.sym);
       }
       g.appendChild(slot);
     }
     g.setAttribute(
       'aria-label',
-      `Tray ${state.tray.length} of ${state.trayCapacity}: ` +
-        (state.tray.map((e) => SYMBOL_NAMES[e.sym] ?? e.sym).join(', ') || 'empty'),
+      t('trayAria', { n: state.tray.length, cap: state.trayCapacity, list: state.tray.map((e) => symbolName(e.sym)).join(', ') || t('trayEmpty') }),
     );
   }
 
@@ -373,20 +397,19 @@ export class UI {
     this._palette = palette;
     const list = this.el.mirrorList;
     list.textContent = '';
-    this.el.mirrorSummary.textContent =
-      `${exposed.length} of ${state.tiles.length} tiles available. Tray ${state.tray.length}/${state.trayCapacity}.`;
+    this.el.mirrorSummary.textContent = t('mirrorSummary', { n: exposed.length, total: state.tiles.length, tray: state.tray.length, cap: state.trayCapacity });
     const tileById = new Map(state.tiles.map((t) => [t.id, t]));
     exposed.forEach((id, i) => {
-      const t = tileById.get(id);
-      if (!t) return;
+      const tile = tileById.get(id);
+      if (!tile) return;
       const li = document.createElement('li');
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'btn';
-      const name = SYMBOL_NAMES[t.sym] ?? t.sym;
+      const name = symbolName(tile.sym);
       btn.textContent = name;
-      btn.style.borderLeft = `6px solid ${symbolColor(t.sym, palette ?? 'default')}`;
-      btn.setAttribute('aria-label', `${name} tile, available, ${i + 1} of ${exposed.length}`);
+      btn.style.borderLeft = `6px solid ${symbolColor(tile.sym, palette ?? 'default')}`;
+      btn.setAttribute('aria-label', t('mirrorTile', { name, i: i + 1, n: exposed.length }));
       btn.addEventListener('click', () => this.a.mirrorSelect(id));
       btn.addEventListener('focus', () => this.a.mirrorFocus?.(id));
       li.appendChild(btn);
@@ -398,11 +421,12 @@ export class UI {
   // Results / help
   // -------------------------------------------------------------------------
 
-  results({ won, reasonText, breakdown, stars, achievements, boardLine, nextLabel }) {
+  results({ won, reasonText, breakdown, stars, achievements, boardLine, nextLabel }, { rerender = false } = {}) {
     // The round-end cue caption ("table cleared — you win") is now the panel
     // heading; drop it so it never sits over the score table or buttons.
-    this.clearCaption();
-    this.el.resultsH.textContent = won ? 'Table cleared' : 'Round over';
+    if (!rerender) this.clearCaption();
+    const heading = won ? t('tableCleared') : t('roundOver');
+    this.el.resultsH.textContent = heading;
     this.el.resultsSub.textContent = reasonText;
     const rows = this.el.resultsRows;
     rows.textContent = '';
@@ -410,7 +434,7 @@ export class UI {
       const tr = document.createElement('tr');
       const th = document.createElement('th');
       th.scope = 'row';
-      th.textContent = r.label;
+      th.textContent = scoreRowLabel(r);
       const td = document.createElement('td');
       td.textContent = String(r.value);
       tr.append(th, td);
@@ -422,16 +446,14 @@ export class UI {
     al.textContent = '';
     for (const a of achievements ?? []) {
       const li = document.createElement('li');
-      li.textContent = `Achievement: ${a.name} — ${a.description}`;
+      li.textContent = t('achievementLine', { name: a.name, desc: a.description });
       al.appendChild(li);
     }
     this.el.resultsBoard.textContent = boardLine ?? '';
-    this.el.btnNext.textContent = nextLabel ?? 'Next';
+    this.el.btnNext.textContent = nextLabel ?? t('next');
+    if (rerender) return;
     this.showScreen('results');
-    this.announce(
-      'results',
-      `${won ? 'Table cleared' : 'Round over'}. Total score ${breakdown.total}. ${reasonText}`,
-    );
+    this.announce('results', t('resultsAnnounce', { heading, total: breakdown.total, reason: reasonText }));
   }
 
   // -------------------------------------------------------------------------
@@ -441,12 +463,16 @@ export class UI {
   openPause({ settingsOnly = false } = {}) {
     this.el.pauseOverlay.hidden = false;
     this._settingsOnly = settingsOnly;
-    // opened from the title it is a settings sheet, not a pause screen
-    $('pause-h').textContent = settingsOnly ? 'Settings' : 'Paused';
-    $('btn-resume').textContent = settingsOnly ? 'Done' : 'Resume';
+    this._labelPause();
     $('btn-leave').hidden = settingsOnly;
     $('btn-pause-help').hidden = settingsOnly;
     (settingsOnly ? this.el.settingsForm.querySelector('input,select') : $('btn-resume')).focus({ preventScroll: true });
+  }
+
+  // Opened from the title it is a settings sheet, not a pause screen.
+  _labelPause() {
+    $('pause-h').textContent = this._settingsOnly ? t('settings') : t('paused');
+    $('btn-resume').textContent = this._settingsOnly ? t('done') : t('resume');
   }
 
   closePause() {
@@ -470,12 +496,12 @@ export class UI {
     sel.textContent = '';
     const auto = document.createElement('option');
     auto.value = 'auto';
-    auto.textContent = 'Auto (from the round)';
+    auto.textContent = t('themeAuto');
     sel.appendChild(auto);
     for (const id of unlockedThemes) {
       const opt = document.createElement('option');
       opt.value = id;
-      opt.textContent = allThemes[id]?.name ?? id;
+      opt.textContent = themeName(id, allThemes[id]?.name);
       sel.appendChild(opt);
     }
     sel.value = settings.themeChoice;
@@ -515,6 +541,17 @@ export class UI {
     this._captionTimer = setTimeout(() => {
       c.textContent = '';
     }, 2600);
+  }
+}
+
+/** Score breakdown row label (rows carry a stable key; triples also a count). */
+function scoreRowLabel(r) {
+  switch (r.key) {
+    case 'triples': return t('scoreTriples', { n: r.count ?? '' });
+    case 'combo': return t('scoreCombo');
+    case 'slots': return t('scoreSlots');
+    case 'time': return t('scoreTime');
+    default: return r.label;
   }
 }
 

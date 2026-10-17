@@ -28,7 +28,6 @@ import {
   THEMES,
   ACHIEVEMENTS,
 } from './rules/content.js';
-import { SYMBOL_NAMES } from './rules/layout.js';
 import { suggestMove } from './rules/solver.js';
 import { Session } from './session/session.js';
 import { SaveStore, DEFAULT_SETTINGS } from './session/storage.js';
@@ -38,6 +37,7 @@ import { AudioEngine } from './audio/audio.js';
 import { TeaScene } from './render/scene.js';
 import { fromLegacyTier } from './render/gfx.js';
 import { UI, fmtMs } from './ui/ui.js';
+import { t, tn, locale, onLanguage, symbolName, themeName, chapterName, levelName, lessonText, playerName } from './ui/i18n.js';
 
 const TICK_MS = 250; // fixed simulation quantum submitted while active
 const TAP_MAX_DIST = 12; // px — tap vs camera-drag threshold
@@ -74,11 +74,11 @@ class App {
     this.store = new SaveStore();
     this.host = new HostPlatform(this.store);
     this.ui = new UI(this._uiActions());
-    this.pt = platformStrings();
+    this.pt = platformStrings(locale());
     this.bindings = DEFAULT_BINDINGS;
     this.codeAction = {};
     this.audio = new AudioEngine(this.store.settings);
-    this.audio.onCaption = (t) => this.ui.caption(t);
+    this.audio.onCaption = (key, vars) => this.ui.caption(t(key, vars));
     this.session = null;
     this.round = null; // { mode, level, lesson, stepIndex }
     this.focusIndex = -1;
@@ -96,16 +96,17 @@ class App {
 
   async boot() {
     this.ui.showScreen('boot');
-    this.ui.boot(1, 4, 'Reading the save…');
+    this.ui.boot(1, 4, t('bootReading'));
+    onLanguage(() => this._relocalize());
     this._applySettings();
 
-    this.ui.boot(2, 4, 'Checking WebGL…');
+    this.ui.boot(2, 4, t('bootWebgl'));
     if (!webglAvailable()) {
       this.ui.showScreen('nogl');
       return;
     }
 
-    this.ui.boot(3, 4, 'Setting the table…');
+    this.ui.boot(3, 4, t('bootTable'));
     this.scene = new TeaScene(document.getElementById('game-canvas'), {
       graphics: this._graphicsSaved(),
       reducedMotion: this.store.settings.reducedMotion,
@@ -116,9 +117,13 @@ class App {
     this._bindFraming();
     this._bindInputs();
 
-    this.ui.boot(4, 4, 'Contacting the host…');
+    this.ui.boot(4, 4, t('bootHost'));
     this.host.setTelemetryConsent(!!this.store.settings.telemetryConsent);
     this.host.onSyncChange = () => {
+      if (this.phase === 'title') this._refreshTitle();
+    };
+    this.host.onCloudMerged = () => {
+      this._applySettings();
       if (this.phase === 'title') this._refreshTitle();
     };
     this.host.onAuthChange = () => {
@@ -147,17 +152,43 @@ class App {
     this.phase = phase;
   }
 
+  /**
+   * The game language changed (Settings → Language, or the account preference
+   * arrived): static markup is already re-applied; re-render everything built
+   * in code in place — no restart, no lost progress, the round keeps going.
+   */
+  _relocalize() {
+    this.pt = platformStrings(locale());
+    this.ui.relocalize();
+    if (this.phase === 'boot') return;
+    this._applySettings();
+    this._refreshGraphicsPanel();
+    this._setBindings(this.bindings);
+    this._refreshTitle();
+    const screen = this.ui.currentScreen();
+    if (screen === 'setup' && this._setupMode) {
+      this._openMode(this._setupMode, { rerender: true });
+    }
+    if (this.round && this.session) {
+      this.ui.setObjective(objectiveFor(this.round.level, this.round.mode), sublineFor(this.round.level, this.round.mode), { quiet: true });
+      this.ui.updateHud(this.session.state, this.round.level);
+      this._refreshMirror();
+      this._tutorialUpdate({ quiet: true });
+    }
+    if (screen === 'results' && this._resultsSpec) this.ui.results(this._resultsSpec(), { rerender: true });
+  }
+
   _refreshTitle() {
     const p = this.store.doc.progression;
     const journeyDone = Object.values(p.journey).filter((s) => s.stars > 0).length;
     this.ui.setTitleInfo({
-      name: this.host.profileName(),
+      name: playerName(this.host.profileName()),
       online: this.host.online,
       sync: this.host.syncLabel(),
       progressText:
         p.roundsPlayed > 0
-          ? `Journey ${journeyDone}/${JOURNEY.length} · ${p.roundsWon} tables cleared · daily streak ${this.store.doc.daily.streak}`
-          : 'Fresh table — the kettle is on.',
+          ? t('progressLine', { done: journeyDone, total: JOURNEY.length, won: p.roundsWon, streak: this.store.doc.daily.streak })
+          : t('freshTable'),
     });
     this.ui.setPlatformButtons({
       signIn: this.host.canSignIn(),
@@ -165,8 +196,8 @@ class App {
       t: this.pt,
     });
     this.ui.setModeMeta({
-      journey: journeyDone > 0 ? `${journeyDone}/${JOURNEY.length} stages cleared` : '',
-      daily: this.store.doc.daily.streak > 0 ? `streak ${this.store.doc.daily.streak}` : '',
+      journey: journeyDone > 0 ? t('metaJourney', { n: journeyDone, total: JOURNEY.length }) : '',
+      daily: this.store.doc.daily.streak > 0 ? t('metaStreak', { n: this.store.doc.daily.streak }) : '',
     });
   }
 
@@ -221,6 +252,7 @@ class App {
       }
       target = 'title';
     }
+    if (target !== 'setup') this._setupMode = null;
     if (target === 'modes') this._setPhase('mode-select');
     if (target === 'title') {
       this._setPhase('title');
@@ -248,8 +280,10 @@ class App {
     for (const [action, codes] of Object.entries(bindings)) for (const c of codes) this.codeAction[c] = action;
     const k = (a) => (bindings[a] ?? []).map(keyLabel).join(' / ');
     this.ui.setControlsHelp(
-      `Tap or click a tile. ${k('focus_left')} ${k('focus_right')} ${k('focus_up')} ${k('focus_down')} move focus between available tiles, ` +
-        `${k('pick')} picks, ${k('undo')} undoes, ${k('hint')} hints, ${k('camera')} resets the camera, ${k('pause')} pauses.`,
+      t('controlsText', {
+        left: k('focus_left'), right: k('focus_right'), up: k('focus_up'), down: k('focus_down'),
+        pick: k('pick'), undo: k('undo'), hint: k('hint'), camera: k('camera'), pause: k('pause'),
+      }),
     );
   }
 
@@ -269,11 +303,11 @@ class App {
 
   _renameProfile() {
     if (this.host.scope.hosted) {
-      this.ui.caption('Hosted play shows your StarHermit account name.');
+      this.ui.caption(t('hostedName'));
       return;
     }
-    const name = prompt('Display name (stored locally):', this.store.doc.profile.displayName);
-    if (!name) return;
+    const name = prompt(t('promptName'), playerName(this.store.doc.profile.displayName));
+    if (!name || name === playerName('Guest')) return;
     this.store.doc.profile.displayName = name.replace(/[<>"]/g, '').trim().slice(0, 24) || 'Guest';
     this.store.save();
     this._refreshTitle();
@@ -283,69 +317,72 @@ class App {
   // Modes and setup screens
   // -------------------------------------------------------------------------
 
-  async _openMode(mode) {
-    this._unlockAudio();
+  async _openMode(mode, opts = {}) {
+    if (!opts.rerender) this._unlockAudio();
     this._setPhase('setup');
+    this._setupMode = mode;
     switch (mode) {
       case 'learn':
         return this.ui.renderSetup({
-          title: 'Learn',
-          blurb: 'Five short lessons. Each one asks you to perform the rule yourself. Unranked, untimed.',
+          title: t('learn'),
+          blurb: t('learnBlurb'),
           groups: [
             {
               items: LESSONS.map((l) => ({
                 id: 'lesson:' + l.id,
-                label: l.name,
-                meta: this.store.doc.progression.lessons[l.id]?.done ? 'completed' : `${l.steps.length} steps`,
+                label: tn('lessons', l.id, l.name),
+                meta: this.store.doc.progression.lessons[l.id]?.done ? t('completed') : t('nSteps', { n: l.steps.length }),
               })),
             },
           ],
-        });
+        }, opts);
       case 'journey':
-        return this._journeySetup();
+        return this._journeySetup(opts);
       case 'daily':
-        return this._dailySetup();
+        return this._dailySetup(opts);
       case 'practice':
         return this.ui.renderSetup({
-          title: 'Practice',
-          blurb: 'Choose a difficulty. Undo is allowed and results are never ranked.',
+          title: t('practice'),
+          blurb: t('practiceBlurb'),
           groups: [
             {
               items: PRACTICE_DIFFICULTIES.map((d) => ({
                 id: 'practice:' + d.id,
-                label: d.name,
-                meta: `${d.config.triples * 3} tiles · ${d.config.maxLayers} layers`,
+                label: tn('difficulties', d.id, d.name),
+                meta: t('tilesLayers', { tiles: d.config.triples * 3, layers: d.config.maxLayers }),
               })),
             },
           ],
-        });
+        }, opts);
       case 'challenge':
         return this.ui.renderSetup({
-          title: 'Challenge',
-          blurb: 'Constrained rounds: clocks, narrow trays, no hints. Ranked.',
+          title: t('challenge'),
+          blurb: t('challengeBlurb'),
           groups: [
             {
               items: CHALLENGES.map((c) => {
                 const rec = this.store.doc.challenges[c.id];
                 return {
                   id: 'challenge:' + c.id,
-                  label: c.name,
+                  label: tn('challenges', c.id, c.name),
                   meta:
-                    [c.blurb, rec?.done ? `best ${rec.bestScore}` : ''].filter(Boolean).join(' — '),
+                    [tn('blurbs', c.id, c.blurb), rec?.done ? t('bestN', { n: rec.bestScore }) : ''].filter(Boolean).join(' — '),
                 };
               }),
             },
           ],
-        });
+        }, opts);
       case 'boards':
-        return this._boardsSetup(false);
+        return this._boardsSetup(opts.rerender ? !!this._boardFriends : false, opts);
     }
   }
 
-  _journeySetup() {
+  _journeySetup(opts = {}) {
     const prog = this.store.doc.progression.journey;
     const groups = JOURNEY_CHAPTERS.map((ch) => ({
-      heading: `${ch.name}${ch.unlockTheme ? ` — clears unlock the “${THEMES[ch.unlockTheme].name}” theme` : ''}`,
+      heading: ch.unlockTheme
+        ? t('chapterUnlock', { chapter: chapterName(ch.id, ch.name), theme: themeName(ch.unlockTheme, THEMES[ch.unlockTheme].name) })
+        : chapterName(ch.id, ch.name),
       items: ch.stages.map((id) => {
         const stage = JOURNEY.find((s) => s.id === id);
         const prev = stage.index > 0 ? prog[JOURNEY[stage.index - 1].id] : { stars: 1 };
@@ -353,104 +390,110 @@ class App {
         const unlocked = (prev?.stars ?? 0) > 0;
         return {
           id: 'journey:' + id,
-          label: `${stage.name}${stage.mastery ? ' ◆ mastery' : ''}`,
+          label: `${levelName(stage)}${stage.mastery ? t('masteryTag') : ''}`,
           stars: rec?.stars > 0 ? '★'.repeat(rec.stars) : '',
-          meta: unlocked ? `${stage.config.triples * 3} tiles` : 'locked',
+          meta: unlocked ? t('nTiles', { n: stage.config.triples * 3 }) : t('locked'),
           disabled: !unlocked,
         };
       }),
     }));
     this.ui.renderSetup({
-      title: 'Journey',
-      blurb: 'Win a stage to unlock the next. Every eighth stage is a mastery test. Ranked, no undo.',
+      title: t('journey'),
+      blurb: t('journeyBlurb'),
       groups,
-    });
+    }, opts);
   }
 
-  async _dailySetup() {
+  async _dailySetup(opts = {}) {
     const local = dailyLevel(todayUTC(this.host.now()));
     const info = await this.host.dailyInfo(local);
     const history = this.store.doc.daily.history[local.day];
     if (info.excluded) {
       return this.ui.renderSetup({
-        title: 'Daily Steep',
-        blurb: `Today's table (${local.day}) was marked excluded from ranking due to defective content. Practice is still available.`,
-        groups: [{ items: [{ id: 'daily:play', label: `Play unranked — ${local.day}`, meta: 'excluded day' }] }],
-      });
+        title: t('dailySteep'),
+        blurb: t('dailyExcluded', { day: local.day }),
+        groups: [{ items: [{ id: 'daily:play', label: t('playUnranked', { day: local.day }), meta: t('excludedDay') }] }],
+      }, opts);
     }
     let resumeItem = null;
     const snap = await this.host.dailySessionFetch(local.day);
     if (snap && !snap.finished && snap.commands?.length > 0) {
-      resumeItem = { id: 'daily:resume', label: 'Resume today’s table', meta: `${snap.commands.length} commands recorded` };
+      resumeItem = { id: 'daily:resume', label: t('resumeToday'), meta: t('commandsRecorded', { n: snap.commands.length }) };
     }
     const items = [];
     if (resumeItem) items.push(resumeItem);
     items.push({
       id: 'daily:play',
-      label: history ? `Play again — ${local.day}` : `Play today’s table — ${local.day}`,
-      meta: history ? `best today ${history.score} (${history.status})` : `${local.config.triples * 3} tiles · ranked · first attempt counts`,
+      label: history ? t('playAgain', { day: local.day }) : t('playToday', { day: local.day }),
+      meta: history
+        ? t('bestToday', { score: history.score, status: history.status === 'won' ? t('statusWon') : t('statusLost') })
+        : t('dailyMeta', { n: local.config.triples * 3 }),
     });
     this.ui.renderSetup({
-      title: 'Daily Steep',
-      blurb: 'One shared table per UTC day, synchronized to server time. Your first attempt of the day is the ranked one.',
+      title: t('dailySteep'),
+      blurb: t('dailyBlurb'),
       groups: [{ items }],
-    });
+    }, opts);
   }
 
-  async _boardsSetup(friends) {
+  async _boardsSetup(friends, opts = {}) {
     this.ui.renderSetup({
-      title: 'Score Chase',
-      blurb: this.host.scope.hosted
-        ? 'The global board is platform-owned and read-only here; your local bests are always kept alongside.'
-        : 'Validated scores only: every entry was replay-verified by the server. Offline? Your local bests stand in.',
+      title: t('scoreChase'),
+      blurb: this.host.scope.hosted ? t('boardsHosted') : t('boardsLocal'),
       groups: [
         {
           items: [
-            { id: 'board:daily', label: 'Daily board', meta: 'shared seeds' },
-            { id: 'board:journey', label: 'Journey board', meta: 'all stages' },
-            { id: 'board:challenge', label: 'Challenge board', meta: 'fixed trials' },
+            { id: 'board:daily', label: t('boardDaily'), meta: t('sharedSeeds') },
+            { id: 'board:journey', label: t('boardJourney'), meta: t('allStages') },
+            { id: 'board:challenge', label: t('boardChallenge'), meta: t('fixedTrials') },
           ],
         },
       ],
-      extraHtml: `<p class="dim-line">Pick a board to view entries.</p>`,
-    });
+      extraHtml: `<p class="dim-line">${escapeHtml(t('pickBoard'))}</p>`,
+    }, opts);
     this._boardFriends = friends;
+    if (!opts.rerender) this._currentBoard = null;
+    else if (this._currentBoard) this._showBoard(this._currentBoard);
   }
 
   async _showBoard(board) {
+    this._currentBoard = board;
     const data = await this.host.leaderboard(board, { friends: !!this._boardFriends, limit: 20 });
     const row = (e, i) =>
-      `<tr><td>${e.rank ?? i + 1}</td><td>${escapeHtml(e.name ?? 'Guest')}</td><td>${escapeHtml(
+      `<tr><td>${e.rank ?? i + 1}</td><td>${escapeHtml(playerName(e.name))}</td><td>${escapeHtml(
         e.contentId ?? e.day ?? '',
       )}</td><td>${e.score}</td><td>${fmtMs(e.elapsedMs ?? 0)}</td></tr>`;
-    const checkbox = `<label><input type="checkbox" id="board-friends" ${this._boardFriends ? 'checked' : ''}> Friends / my entries only</label>`;
+    const checkbox = `<label><input type="checkbox" id="board-friends" ${this._boardFriends ? 'checked' : ''}> ${escapeHtml(t('friendsOnly'))}</label>`;
+    const head = ['colPlayer', 'colTable', 'colScore', 'colTime'].map((k) => `<th>${escapeHtml(t(k))}</th>`).join('');
     const table = (rows) =>
-      `<table class="score-table"><thead><tr><th>#</th><th>Player</th><th>Table</th><th>Score</th><th>Time</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="5">No entries yet.</td></tr>'}</tbody></table>`;
+      `<table class="score-table"><thead><tr><th>#</th>${head}</tr></thead>
+      <tbody>${rows || `<tr><td colspan="5">${escapeHtml(t('noEntries'))}</td></tr>`}</tbody></table>`;
+    const boardTitle = escapeHtml(t({ daily: 'nameDaily', journey: 'nameJourney', challenge: 'nameChallenge' }[board] ?? 'scoreChase'));
     let html;
     if (this.host.scope.hosted) {
       // Platform leaderboard is read-only; local bests ride along.
       const meLine =
-        data.me?.rank != null ? `<p class="dim-line">Your platform rank: ${escapeHtml(String(data.me.rank))}.</p>` : '';
+        data.me?.rank != null ? `<p class="dim-line">${escapeHtml(t('platformRank', { rank: data.me.rank }))}</p>` : '';
       const global = data.entries.length
-        ? `<h3>Global — platform board</h3>${table(data.entries.map(row).join(''))}${meLine}`
-        : '<p class="dim-line">Global board is empty or unavailable — the platform records ranked results server-side.</p>';
+        ? `<h3>${escapeHtml(t('globalBoard'))}</h3>${table(data.entries.map(row).join(''))}${meLine}`
+        : `<p class="dim-line">${escapeHtml(t('globalEmpty'))}</p>`;
       const localRows = data.local.map((e, i) => row({ ...e, rank: i + 1 }, i)).join('');
       html = `
-        <h2>${board[0].toUpperCase() + board.slice(1)}</h2>
+        <h2>${boardTitle}</h2>
         ${global}
-        <h3>Your local bests</h3>
+        <h3>${escapeHtml(t('localBests'))}</h3>
         ${checkbox}
         ${table(localRows)}`;
     } else {
       const rows = data.entries.map(row).join('');
       const source =
-        data.source === 'local' ? 'Local bests (offline)' : data.casual ? 'Casual board' : 'Verified board';
+        data.source === 'local' ? t('sourceLocal') : data.casual ? t('sourceCasual') : t('sourceVerified');
       html = `
-        <h2>${board[0].toUpperCase() + board.slice(1)} — ${source}</h2>
+        <h2>${boardTitle} — ${escapeHtml(source)}</h2>
         ${checkbox}
         ${table(rows)}`;
     }
+    if (this._currentBoard !== board || this.ui.currentScreen() !== 'setup') return;
     document.getElementById('setup-extra').innerHTML = html;
     document.getElementById('board-friends')?.addEventListener('change', (e) => {
       this._boardFriends = e.target.checked;
@@ -474,7 +517,7 @@ class App {
       if (kind === 'daily') return this._startDaily(rest === 'resume');
     } catch (err) {
       this.host.track('error', { category: 'content' });
-      this.ui.error('That table could not be prepared: ' + err.message);
+      this.ui.error(t('setupError', { error: err.message }));
     }
   }
 
@@ -517,12 +560,14 @@ class App {
       }
       if (replayOk) {
         this.session.syncCommandSeq(); // avoid id collisions with the replayed log
-        this.ui.caption('Restored your daily table from the server');
+        this.ui.caption(t('restoredDaily'));
       } else {
         this.session = new Session(level, { assists: { timingAssist: s.timingAssist } });
       }
     }
     this.round = { mode, level, lesson, stepIndex: 0, seed: level.seed };
+    this._resultsSpec = null;
+    this._setupMode = null;
     this.scene.reducedMotion = s.reducedMotion;
     this.scene.rig.reducedMotion = s.reducedMotion;
     this.scene.buildBoard(level, this.session.state);
@@ -579,8 +624,8 @@ class App {
     const id = suggestMove(this.session.state);
     if (id) {
       this.scene.showHint(id);
-      const t = this.session.state.tiles.find((x) => x.id === id);
-      this.ui.announce('objective', `Hint: try the ${SYMBOL_NAMES[t?.sym] ?? ''} tile.`);
+      const tile = this.session.state.tiles.find((x) => x.id === id);
+      this.ui.announce('objective', t('hintTry', { symbol: symbolName(tile?.sym) ?? '' }));
     }
     this._afterSubmit(res);
   }
@@ -610,7 +655,7 @@ class App {
   }
 
   _invalidFeedback(reason, tileId = null) {
-    const msg = INVALID_REASONS[reason] ?? 'Not allowed.';
+    const msg = INVALID_REASONS[reason] ? t(REASON_KEYS[reason]) : t('notAllowed');
     this.ui.error(msg);
     this.audio.playEvent({ type: 'invalid' });
     if (tileId) this.scene.applyEvents([{ type: 'invalid', reason, tileId }], this.session.state);
@@ -621,14 +666,15 @@ class App {
   // Tutorial (Learn mode): one rule at a time, action required
   // -------------------------------------------------------------------------
 
-  _tutorialUpdate() {
+  _tutorialUpdate({ quiet = false } = {}) {
     const lesson = this.round?.lesson;
     if (!lesson) return this.ui.tutorial(null);
     const step = lesson.steps[this.round.stepIndex];
     if (!step) return this.ui.tutorial(null);
-    const prefix = this.round.stepIndex === 0 ? `${lesson.intro} ` : '';
-    this.ui.tutorial(prefix + step.text);
-    this.ui.announce('objective', `Lesson: ${step.text}`);
+    const text = lessonText(step.id, step.text);
+    const prefix = this.round.stepIndex === 0 ? `${lessonText(lesson.id, lesson.intro)} ` : '';
+    this.ui.tutorial(prefix + text);
+    if (!quiet) this.ui.announce('objective', t('lessonAnnounce', { text }));
   }
 
   _tutorialAdvance(events, tileId) {
@@ -682,34 +728,39 @@ class App {
     // results line shows the rank; the global board is viewed in Score Chase.
     const ranked = mode !== 'practice' && mode !== 'learn';
     const postLb = ranked && this.host.scope.hosted;
-    const boardLine = postLb ? this.pt('lbPosting')
-      : !ranked ? 'Unranked round — local best recorded.'
-        : 'Local best recorded on this device.';
+    // Board line state: 'posting' → a platform result, or a local-only note.
+    let board = postLb ? { key: 'lbPosting', platform: true } : { key: ranked ? 'localBestDevice' : 'unrankedLocal' };
     const lbPost = postLb ? this.host.submitScore(result.score) : null;
 
     const breakdown = scoreBreakdown(state);
     const stars = won && level.star ? starsFor(result.score, level.star) : 0;
-    const reasonText = won
-      ? `${level.name} cleared in ${fmtMs(state.elapsedMs)} with ${state.moves} moves.`
-      : reasonTextFor(state.terminalReason);
+    // Built on demand so the results panel re-renders in a new language.
+    const spec = () => ({
+      won,
+      reasonText: won
+        ? t('clearedIn', { level: levelName(level), time: fmtMs(state.elapsedMs), moves: state.moves })
+        : reasonTextFor(state.terminalReason),
+      breakdown,
+      stars,
+      achievements: unlocked.map((a) => {
+        const [name, description] = tn('achievements', a.key, [a.name, a.description]);
+        return { key: a.key, name, description };
+      }),
+      boardLine: board.platform ? this.pt(board.key, board.vars) : t(board.key),
+      nextLabel: mode === 'journey' && won ? t('nextStage') : t('continue'),
+    });
 
     // Brief beat so the win/lose scene animation lands before the panel.
     setTimeout(() => {
       if (this.session !== completedSession || this.phase !== 'resolving') return; // user navigated away mid-beat
       this._setPhase('results');
-      this.ui.results({
-        won,
-        reasonText,
-        breakdown,
-        stars,
-        achievements: unlocked,
-        boardLine,
-        nextLabel: mode === 'journey' && won ? 'Next stage' : 'Continue',
-      });
+      this._resultsSpec = spec;
+      this.ui.results(spec());
       lbPost?.then((r) => {
+        board = !r.posted ? { key: 'lbNotPosted', platform: true }
+          : r.rank ? { key: 'lbRank', vars: { rank: r.rank }, platform: true } : { key: 'lbPosted', platform: true };
         if (this.session !== completedSession || this.phase !== 'results') return;
-        this.ui.el.resultsBoard.textContent = !r.posted ? this.pt('lbNotPosted')
-          : r.rank ? this.pt('lbRank', { rank: r.rank }) : this.pt('lbPosted');
+        this.ui.el.resultsBoard.textContent = this.pt(board.key, board.vars);
       });
     }, won ? 1200 : 700);
   }
@@ -759,7 +810,7 @@ class App {
     this._setPhase('paused');
     this._stopClock();
     this.ui.openPause();
-    if (auto) this.ui.announce('objective', 'Paused because the tab was hidden.');
+    if (auto) this.ui.announce('objective', t('pausedHidden'));
   }
 
   resumeGame() {
@@ -905,7 +956,7 @@ class App {
   }
 
   _onContextLost() {
-    this.ui.error('Graphics context lost — rebuilding the table.');
+    this.ui.error(t('contextLost'));
     try {
       const canvas = this.scene.canvas;
       const level = this.round?.level;
@@ -1062,12 +1113,12 @@ class App {
       const dir = key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1;
       this.focusIndex = (this.focusIndex + dir + targets.length) % targets.length;
     }
-    const t = targets[this.focusIndex];
-    this.scene.setFocus(t.id);
-    this.scene.setHover(t.id);
+    const target = targets[this.focusIndex];
+    this.scene.setFocus(target.id);
+    this.scene.setHover(target.id);
     this.ui.announce(
       'objective',
-      `${SYMBOL_NAMES[t.sym] ?? t.sym} tile, layer ${t.z + 1}, ${this.focusIndex + 1} of ${targets.length}. Enter to pick.`,
+      t('focusAnnounce', { symbol: symbolName(target.sym), layer: target.z + 1, i: this.focusIndex + 1, n: targets.length }),
     );
   }
 
@@ -1149,44 +1200,30 @@ function webglAvailable() {
 }
 
 function objectiveFor(level, mode) {
-  switch (mode) {
-    case 'learn':
-      return level.name;
-    case 'journey':
-      return `${level.name}${level.mastery ? ' — mastery' : ''}`;
-    case 'daily':
-      return `Daily Steep — ${level.day}`;
-    case 'challenge':
-      return level.name;
-    default:
-      return level.name;
-  }
+  const name = levelName(level);
+  return mode === 'journey' && level.mastery ? t('masteryObjective', { name }) : name;
 }
 
 function sublineFor(level, mode) {
-  const parts = [`clear ${level.tiles.length} tiles`];
-  if (level.config.timeLimitMs) parts.push(`clock ${fmtMs(level.config.timeLimitMs)}`);
-  if (level.config.trayCapacity !== 7) parts.push(`tray of ${level.config.trayCapacity}`);
-  if (level.config.ranked) parts.push('ranked');
-  if (mode === 'practice') parts.push('undo allowed · unranked');
-  if (level.config.hints === false) parts.push('no hints');
-  return 'Objective: ' + parts.join(' · ');
+  const parts = [t('clearN', { n: level.tiles.length })];
+  if (level.config.timeLimitMs) parts.push(t('clockT', { time: fmtMs(level.config.timeLimitMs) }));
+  if (level.config.trayCapacity !== 7) parts.push(t('trayOfN', { n: level.config.trayCapacity }));
+  if (level.config.ranked) parts.push(t('ranked'));
+  if (mode === 'practice') parts.push(t('undoUnranked'));
+  if (level.config.hints === false) parts.push(t('noHints'));
+  return t('objectiveLine', { parts: parts.join(' · ') });
 }
 
+const END_KEYS = { tray_full: 'endTrayFull', move_limit: 'endMoveLimit', time_limit: 'endTimeLimit', resigned: 'endResigned' };
 function reasonTextFor(reason) {
-  switch (reason) {
-    case 'tray_full':
-      return 'The tray filled with no triple. Watch the gauge and complete sets sooner.';
-    case 'move_limit':
-      return 'The move limit ran out.';
-    case 'time_limit':
-      return 'The clock ran out.';
-    case 'resigned':
-      return 'You left the round.';
-    default:
-      return 'The round has ended.';
-  }
+  return t(END_KEYS[reason] ?? 'endOther');
 }
+
+// Engine invalid-action reasons → localized messages (INVALID_REASONS keeps the English).
+const REASON_KEYS = {
+  not_active: 'rsnNotActive', malformed: 'rsnMalformed', tile_not_found: 'rsnTileNotFound', tile_blocked: 'rsnTileBlocked',
+  limit_exceeded: 'rsnLimitExceeded', undo_disabled: 'rsnUndoDisabled', undo_empty: 'rsnUndoEmpty', hint_disabled: 'rsnHintDisabled',
+};
 
 function starsFor(score, [t2, t3]) {
   if (score >= t3) return 3;

@@ -1,8 +1,8 @@
 /**
  * Local persistence — a single versioned, checksummed save document.
- * Cloud sync conflicts are resolved by keeping both snapshots; the UI asks
- * when neither is a strict descendant (spec §6). No credentials or private
- * data ever enter the save.
+ * Cloud copies are merged into it (mergeSaveDocs) so neither device's
+ * progress is lost (spec §6). No credentials or private data ever enter the
+ * save.
  */
 
 import { fnv1a } from '../rules/rng.js';
@@ -98,7 +98,6 @@ export class SaveStore {
   constructor(storage = globalThis.localStorage) {
     this.storage = storage;
     this.doc = this._load();
-    this.conflict = null; // { local, remote } when an unresolved conflict exists
   }
 
   _load() {
@@ -219,58 +218,105 @@ export class SaveStore {
   }
 
   /**
-   * Import a (possibly cloud-synced) document. If neither document is a
-   * strict descendant of the other, keep both and surface a conflict for the
-   * player to resolve (spec §6 cloud-save conflict rule).
+   * Fold a cloud-saved document into this device's (boot load and after a
+   * refused conditional write): mergeSaveDocs keeps the better progress of
+   * both sides. Returns { status: 'merged' | 'rejected', changed } where
+   * `changed` says the merged doc differs from the remote one (so it needs
+   * writing back).
    */
-  mergeRemote(remoteDoc) {
-    if (!remoteDoc || remoteDoc.checksum !== checksum(remoteDoc)) return { status: 'rejected' };
-    const local = this.doc;
-    if (remoteDoc.updatedAt <= local.updatedAt) return { status: 'kept-local' };
-    const localAhead = this._progressAhead(local, remoteDoc);
-    const remoteAhead = this._progressAhead(remoteDoc, local);
-    if (remoteAhead && !localAhead) {
-      this.doc = migrate(remoteDoc);
-      this.save();
-      return { status: 'applied-remote' };
+  mergeCloud(remoteDoc) {
+    if (!remoteDoc || typeof remoteDoc !== 'object' || remoteDoc.checksum !== checksum(remoteDoc)) {
+      return { status: 'rejected', changed: true };
     }
-    if (!remoteAhead && !localAhead) {
-      this.doc = migrate(remoteDoc);
-      this.save();
-      return { status: 'applied-remote' };
-    }
-    this.conflict = { local, remote: remoteDoc };
-    this.storage?.setItem(SAVE_KEY + '.conflict', JSON.stringify(remoteDoc));
-    return { status: 'conflict' };
+    this.doc = mergeSaveDocs(remoteDoc, this.doc);
+    this.save();
+    return { status: 'merged', changed: progressKey(this.doc) !== progressKey(migrate(remoteDoc)) };
   }
+}
 
-  resolveConflict(choice /* 'local' | 'remote' */) {
-    if (!this.conflict) return;
-    if (choice === 'remote') {
-      this.doc = migrate(this.conflict.remote);
-      this.save();
-    }
-    this.conflict = null;
-    this.storage?.removeItem(SAVE_KEY + '.conflict');
-  }
+const progressKey = (d) => JSON.stringify([d.progression, d.daily, d.challenges, d.achievements, d.boards]);
 
-  _progressAhead(a, b) {
-    // A is "ahead" of B if every progress marker in B is present in A and at
-    // least one is strictly greater (strict descendant test).
-    const pa = a.progression ?? {};
-    const pb = b.progression ?? {};
-    let ahead = false;
-    const ids = new Set([...Object.keys(pa.journey ?? {}), ...Object.keys(pb.journey ?? {})]);
-    for (const id of ids) {
-      const sa = pa.journey?.[id]?.stars ?? 0;
-      const sb = pb.journey?.[id]?.stars ?? 0;
-      if (sb > sa) return false;
-      if (sa > sb) ahead = true;
-    }
-    if ((pa.tilesClearedTotal ?? 0) < (pb.tilesClearedTotal ?? 0)) return false;
-    if ((pa.tilesClearedTotal ?? 0) > (pb.tilesClearedTotal ?? 0)) ahead = true;
-    return ahead;
+/**
+ * Merge two save documents without dropping either side's progress: per
+ * journey stage the better stars/best score, unions of lessons, themes,
+ * achievements (earliest unlock), daily history (better score per day) and
+ * local boards, the larger counters, the streak of the later day. Settings
+ * come from the more recently saved side; profile and the in-round snapshot
+ * stay this device's (`local`).
+ */
+export function mergeSaveDocs(remoteDoc, localDoc) {
+  const r = migrate(JSON.parse(JSON.stringify(remoteDoc)));
+  const l = migrate(JSON.parse(JSON.stringify(localDoc)));
+  const remoteNewer = (r.updatedAt ?? 0) > (l.updatedAt ?? 0);
+  const out = { ...l };
+  out.settings = { ...(remoteNewer ? r.settings : l.settings) };
+  out.profile = { ...r.profile, ...l.profile, guestId: l.profile.guestId ?? r.profile.guestId };
+  out.lastSnapshot = l.lastSnapshot ?? r.lastSnapshot ?? null;
+  out.updatedAt = Math.max(r.updatedAt ?? 0, l.updatedAt ?? 0);
+
+  const rp = r.progression, lp = l.progression;
+  const journey = {};
+  for (const id of new Set([...Object.keys(rp.journey ?? {}), ...Object.keys(lp.journey ?? {})])) {
+    const a = rp.journey?.[id] ?? {}, b = lp.journey?.[id] ?? {};
+    journey[id] = {
+      stars: Math.max(a.stars ?? 0, b.stars ?? 0),
+      bestScore: Math.max(a.bestScore ?? 0, b.bestScore ?? 0),
+      plays: Math.max(a.plays ?? 0, b.plays ?? 0),
+    };
   }
+  const lessons = {};
+  for (const id of new Set([...Object.keys(rp.lessons ?? {}), ...Object.keys(lp.lessons ?? {})])) {
+    lessons[id] = { done: !!(rp.lessons?.[id]?.done || lp.lessons?.[id]?.done) };
+  }
+  out.progression = {
+    ...lp,
+    journey,
+    lessons,
+    unlockedThemes: [...new Set([...(lp.unlockedThemes ?? []), ...(rp.unlockedThemes ?? [])])],
+    masteryStars: Object.values(journey).reduce((n, s) => n + s.stars, 0),
+    tilesClearedTotal: Math.max(rp.tilesClearedTotal ?? 0, lp.tilesClearedTotal ?? 0),
+    roundsPlayed: Math.max(rp.roundsPlayed ?? 0, lp.roundsPlayed ?? 0),
+    roundsWon: Math.max(rp.roundsWon ?? 0, lp.roundsWon ?? 0),
+  };
+
+  const history = { ...r.daily.history };
+  for (const [day, e] of Object.entries(l.daily.history ?? {})) {
+    const o = history[day];
+    history[day] = !o ? e : { ...(o.ranked ? o : e), score: Math.max(o.score ?? 0, e.score ?? 0), status: (e.score ?? 0) > (o.score ?? 0) ? e.status : o.status };
+  }
+  const later = (r.daily.lastDay ?? '') > (l.daily.lastDay ?? '') ? r.daily : (l.daily.lastDay ?? '') > (r.daily.lastDay ?? '') ? l.daily
+    : (r.daily.streak ?? 0) > (l.daily.streak ?? 0) ? r.daily : l.daily;
+  out.daily = { history, streak: later.streak ?? 0, lastDay: later.lastDay ?? null };
+
+  const challenges = {};
+  for (const id of new Set([...Object.keys(r.challenges ?? {}), ...Object.keys(l.challenges ?? {})])) {
+    const a = r.challenges?.[id] ?? {}, b = l.challenges?.[id] ?? {};
+    challenges[id] = { bestScore: Math.max(a.bestScore ?? 0, b.bestScore ?? 0), done: !!(a.done || b.done) };
+  }
+  out.challenges = challenges;
+
+  const achievements = { ...r.achievements };
+  for (const [k, v] of Object.entries(l.achievements ?? {})) {
+    const o = achievements[k];
+    achievements[k] = !o || (v.unlockedAt ?? Infinity) < (o.unlockedAt ?? Infinity) ? v : o;
+  }
+  out.achievements = achievements;
+
+  const boards = {};
+  for (const name of new Set([...Object.keys(r.boards ?? {}), ...Object.keys(l.boards ?? {})])) {
+    const seen = new Set();
+    boards[name] = [...(l.boards?.[name] ?? []), ...(r.boards?.[name] ?? [])]
+      .filter((e) => {
+        const key = [e.sessionId, e.contentId ?? e.day, e.score, e.at].join('|');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 50);
+  }
+  out.boards = boards;
+  return out;
 }
 
 function starsFor(score, [t2, t3]) {

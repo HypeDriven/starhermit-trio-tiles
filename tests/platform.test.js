@@ -31,7 +31,7 @@ function memStorage() {
 }
 function stubServer() {
   const calls = [];
-  const state = { save: null, settings: {} };
+  const state = { save: null, etag: null, version: 0, settings: {} };
   const json = (o) => new Response(JSON.stringify(o), { status: 200, headers: { 'content-type': 'application/json' } });
   const fetch = async (url, init = {}) => {
     const method = init.method || 'GET';
@@ -39,9 +39,16 @@ function stubServer() {
     if (url === '/api/v1/time') return json({ epochMs: Date.now() });
     if (url === `/api/v1/users/${USER}/profile`) return json({ nickname: 'Tea Tamsin' });
     if (url.startsWith('/api/v1/me/cloud-saves/')) {
+      // Versioned slot: conditional writes (If-Match / If-None-Match) answer 412 on a stale version.
+      if (url.endsWith('/info')) return json(state.save ? { exists: true, etag: state.etag } : { exists: false });
       if (method === 'PUT') {
+        const h = init.headers || {};
+        if ((h['If-Match'] && h['If-Match'] !== state.etag) || (h['If-None-Match'] === '*' && state.save)) {
+          return new Response(JSON.stringify({ error: 'precondition_failed', etag: state.etag }), { status: 412, headers: { 'content-type': 'application/json' } });
+        }
         state.save = Buffer.from(JSON.parse(init.body).dataBase64, 'base64');
-        return new Response(null, { status: 204 });
+        state.etag = '"v' + ++state.version + '"';
+        return json({ etag: state.etag });
       }
       return state.save ? new Response(state.save) : new Response(null, { status: 404 });
     }
@@ -139,4 +146,73 @@ test('leaderboard line strings in every locale', async () => {
     for (const k of ['lbPosting', 'lbRank', 'lbPosted', 'lbNotPosted']) assert.ok(PLATFORM_STRINGS[l][k], l + ' ' + k);
     assert.match(platformStrings(l)('lbRank', { rank: 4 }), /#4/, l);
   }
+});
+
+test('save conflict: another device saved first → reload, merge, save again', async () => {
+  const srv = stubServer();
+  const sh = loadSdk().create({ window: fakeWindow('#game_token=' + JWT), fetch: srv.fetch, ...noTimers });
+  sh.init();
+  const store = new SaveStore(memStorage());
+  store.doc.progression.journey['j1-1'] = { stars: 3, bestScore: 800, plays: 2 };
+  store.doc.progression.roundsPlayed = 2;
+  const host = new HostPlatform(store, sh);
+  await host.init(); // empty slot: the boot load sees "no save"
+
+  // Another device writes first: it has j1-2 and an achievement this one lacks.
+  const other = new SaveStore(memStorage());
+  other.doc.progression.journey['j1-1'] = { stars: 1, bestScore: 300, plays: 5 };
+  other.doc.progression.journey['j1-2'] = { stars: 2, bestScore: 650, plays: 1 };
+  other.doc.progression.roundsPlayed = 6;
+  other.doc.achievements.first_clear = { unlockedAt: 5 };
+  other.save();
+  const zipped = await (async () => {
+    const sh2 = loadSdk().create({ window: fakeWindow('#game_token=' + JWT), fetch: srv.fetch, ...noTimers });
+    sh2.init();
+    await sh2.loadJSON();
+    assert.equal(await sh2.writeSave(JSON.stringify(other.doc)), true);
+    return srv.state.etag;
+  })();
+  assert.ok(zipped);
+
+  let conflicts = 0;
+  sh.on('saveconflict', () => conflicts++);
+  let merged = 0;
+  host.onCloudMerged = () => merged++;
+  store.save(); // this device's write is now stale → 412 → saveconflict
+  await host._flushCloudSave();
+  for (let i = 0; i < 20 && !merged; i++) await new Promise((r) => setImmediate(r));
+  assert.equal(conflicts, 1);
+  assert.equal(merged, 1);
+  const p = store.doc.progression;
+  assert.deepEqual(p.journey['j1-1'], { stars: 3, bestScore: 800, plays: 5 });
+  assert.deepEqual(p.journey['j1-2'], { stars: 2, bestScore: 650, plays: 1 });
+  assert.equal(p.roundsPlayed, 6);
+  assert.ok(store.doc.achievements.first_clear);
+  assert.equal(sh.saveConflicted(), false);
+  const back = await sh.loadJSON();
+  assert.equal(back.progression.journey['j1-2'].stars, 2);
+  assert.equal(back.progression.journey['j1-1'].stars, 3);
+});
+
+test('boot load merges cloud and local progress instead of letting the cloud win', async () => {
+  const srv = stubServer();
+  const cloud = new SaveStore(memStorage());
+  cloud.doc.progression.journey['j1-2'] = { stars: 2, bestScore: 600, plays: 1 };
+  cloud.doc.challenges['six-cups'] = { bestScore: 900, done: true };
+  cloud.save();
+  const sh0 = loadSdk().create({ window: fakeWindow('#game_token=' + JWT), fetch: srv.fetch, ...noTimers });
+  sh0.init();
+  await sh0.loadJSON();
+  await sh0.writeSave(JSON.stringify(cloud.doc));
+
+  const sh = loadSdk().create({ window: fakeWindow('#game_token=' + JWT), fetch: srv.fetch, ...noTimers });
+  sh.init();
+  const store = new SaveStore(memStorage());
+  store.doc.progression.journey['j1-1'] = { stars: 3, bestScore: 820, plays: 1 };
+  store.doc.updatedAt = 1; // older than the cloud copy
+  const host = new HostPlatform(store, sh);
+  await host.init();
+  assert.equal(store.doc.progression.journey['j1-1'].stars, 3);
+  assert.equal(store.doc.progression.journey['j1-2'].stars, 2);
+  assert.equal(store.doc.challenges['six-cups'].done, true);
 });

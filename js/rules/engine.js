@@ -394,7 +394,7 @@ export function applyCommand(state, cmd) {
 export function scoreBreakdown(state) {
   const s = state.score;
   const rows = [
-    { key: 'triples', label: `Triples cleared ×${s.triples}`, value: s.base },
+    { key: 'triples', label: `Triples cleared ×${s.triples}`, count: s.triples, value: s.base },
     { key: 'combo', label: 'Combo bonus', value: s.comboBonus },
     { key: 'slots', label: 'Tray space kept', value: s.slotBonus },
     { key: 'time', label: 'Under par time', value: s.timeBonus },

@@ -77,8 +77,9 @@ export class AudioEngine {
     this.buses.voice.gain.value = s.voice;
   }
 
-  _caption(text) {
-    if (this.settings.captions && this.onCaption) this.onCaption(text);
+  /** Caption cue by string key (+ vars); the UI localizes it (onCaption(key, vars)). */
+  _caption(key, vars) {
+    if (this.settings.captions && this.onCaption) this.onCaption(key, vars);
   }
 
   /** Short envelope oscillator blip. */
@@ -185,7 +186,7 @@ export class AudioEngine {
           this._thock({ freq: 1400, gain: 0.22 });
           this._blip({ freq: 520 + v, dur: 0.07, type: 'triangle', gain: 0.12 });
         }
-        this._caption('tile picked');
+        this._caption('capPick');
         break;
       case 'triple': {
         if (!this._trySfx('triple')) {
@@ -195,7 +196,7 @@ export class AudioEngine {
           setTimeout(() => this._chime(base + 4, { gain: 0.2 }), 140);
           this._thock({ freq: 900, gain: 0.15, dur: 0.2 });
         }
-        this._caption(ev.chain > 1 ? `combo ×${ev.chain}` : 'triple cleared');
+        this._caption(ev.chain > 1 ? 'capCombo' : 'capTriple', { n: ev.chain });
         break;
       }
       case 'invalid':
@@ -203,33 +204,33 @@ export class AudioEngine {
           this._blip({ freq: 140, dur: 0.16, type: 'square', gain: 0.08 });
           this._thock({ freq: 300, gain: 0.12, dur: 0.12 });
         }
-        this._caption('not allowed');
+        this._caption('capInvalid');
         break;
       case 'undo':
         if (!this._trySfx('undo')) {
           this._blip({ freq: 340, dur: 0.09, type: 'triangle', gain: 0.14 });
           setTimeout(() => this._blip({ freq: 260, dur: 0.1, type: 'triangle', gain: 0.12 }), 60);
         }
-        this._caption('move undone');
+        this._caption('capUndo');
         break;
       case 'hint':
         if (!this._trySfx('hint')) {
           this._chime(7, { gain: 0.12, dur: 0.3 });
         }
-        this._caption('hint shown');
+        this._caption('capHint');
         break;
       case 'win':
         if (!this._trySfx('win')) {
           [0, 2, 4, 7, 9, 12].forEach((s, i) => setTimeout(() => this._chime(s, { gain: 0.22, dur: 0.7 }), i * 110));
         }
-        this._caption('table cleared — you win');
+        this._caption('capWin');
         break;
       case 'lose':
         if (!this._trySfx('lose')) {
           this._blip({ freq: 196, dur: 0.8, type: 'sine', gain: 0.18 });
           setTimeout(() => this._blip({ freq: 147, dur: 1.0, type: 'sine', gain: 0.16 }), 200);
         }
-        this._caption('round over');
+        this._caption('capLose');
         break;
       case 'tick':
         break;

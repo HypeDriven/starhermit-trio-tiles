@@ -1,6 +1,6 @@
 /**
  * Strings for the StarHermit buttons and toasts (sign-in, invite, signed
- * out) and the results leaderboard line. Locale follows navigator.language like the Graphics strings.
+ * out) and the results leaderboard line, in the game language (main.js passes locale()).
  */
 
 import { pickLocale } from './gfx-strings.js';

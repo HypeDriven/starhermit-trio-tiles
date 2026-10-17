@@ -1,6 +1,6 @@
 /**
- * Localized strings for the Graphics settings section. The game has no
- * language setting, so the locale follows navigator.language, falling back by
+ * Localized strings for the Graphics settings section. The
+ * game language (js/ui/i18n.js) passes its locale in; a bare tag falls back by
  * language prefix and finally to en-US.
  */
 

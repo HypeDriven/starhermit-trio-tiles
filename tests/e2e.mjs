@@ -41,6 +41,7 @@ import { Session } from '../js/session/session.js';
 import { solve } from '../js/rules/solver.js';
 import { legalActions, applyCommand } from '../js/rules/engine.js';
 import { SYMBOL_NAMES } from '../js/rules/layout.js';
+import { launchToken, stubStarHermit } from './starhermit-e2e.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SHOT = (stage, vp) => `/tmp/trio-tiles-e2e-${stage}-${vp}.png`;
@@ -443,6 +444,115 @@ async function runPass(browser, name, ctxOpts, { full }) {
   console.log(`ok - ${name}: no page errors`);
 }
 
+
+// ---------------------------------------------------------------------------
+// Language + report pass (signed in, stubbed StarHermit API). Automatic
+// follows the account's preferred language (fr-CA); choosing Italian in
+// Settings relabels in place and PUTs ui.language; Report a problem posts to
+// /reports; a German round shows German HUD text at this viewport; switching
+// back to Automatic from the pause menu re-renders the round's text without
+// restarting it.
+// ---------------------------------------------------------------------------
+
+async function languagePass(browser, name, ctxOpts) {
+  const errors = [];
+  const context = await browser.newContext(ctxOpts);
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  page.on('console', (m) => {
+    if ((m.type() !== 'error' && m.type() !== 'warning') || browserNoise.test(m.text())) return;
+    errors.push(`console ${m.type()}: ${m.text()}`);
+  });
+  const touch = !!ctxOpts.hasTouch;
+  try {
+    const calls = await stubStarHermit(page, { preferredLanguage: 'fr-CA' });
+    await page.goto('about:blank');
+    await page.goto(BASE + '/index.html#game_token=' + launchToken(), { waitUntil: 'load' });
+    await screenVisible(page, 'title');
+    await page.waitForFunction(() => document.documentElement.lang === 'fr-CA', null, { timeout: 15000 });
+    await page.waitForFunction(() => document.getElementById('btn-play').textContent.trim() === 'Jouer');
+    ok(`${name}: Automatic follows the account language (fr-CA)`);
+
+    await press(page, '#btn-title-settings', touch);
+    const choice = page.locator('#overlay-pause [data-game-language="choice"]');
+    await choice.scrollIntoViewIfNeeded();
+    const auto = (await choice.locator('option').first().textContent()).trim();
+    if (auto !== 'Automatique — Français (Canada)') throw new Error(`Automatic label not resolved: "${auto}"`);
+    if ((await page.locator('[data-game-language="choice"]').count()) !== 1) throw new Error('expected exactly one language selector');
+    await choice.selectOption('it-IT');
+    await page.waitForFunction(() => document.documentElement.lang === 'it-IT');
+    await page.waitForFunction(() => /Salvato/.test(document.querySelector('[data-game-language="status"]').textContent));
+    if (calls.settings['ui.language']?.choice !== 'it-IT') throw new Error('ui.language not saved: ' + JSON.stringify(calls.settings));
+    const relabel = await page.evaluate(() => ({
+      title: document.getElementById('pause-h').textContent,
+      done: document.getElementById('btn-resume').textContent,
+      gfx: document.getElementById('gfx-legend').textContent,
+      reduced: document.querySelector('[data-i18n="reducedMotion"]').textContent,
+    }));
+    if (relabel.title !== 'Impostazioni' || relabel.done !== 'Fatto' || relabel.gfx !== 'Grafica' || relabel.reduced !== 'Movimento ridotto') {
+      throw new Error('Settings not re-rendered in Italian: ' + JSON.stringify(relabel));
+    }
+    ok(`${name}: Italian chosen in Settings — relabelled in place, ui.language saved`);
+
+    await page.locator('[data-game-report="title"]').scrollIntoViewIfNeeded();
+    await page.fill('[data-game-report="title"]', 'Test report');
+    await press(page, '[data-game-report="send"]', touch);
+    await page.waitForFunction(() => /Grazie/.test(document.querySelector('[data-game-report="status"]').textContent));
+    if (!calls.reports?.[0] || calls.reports[0].kind !== 'bug') throw new Error('report not posted');
+    await page.screenshot({ path: SHOT('language', name) });
+    ok(`${name}: Report a problem posted to /reports`);
+
+    // German round: start Journey stage 1 and check the HUD text.
+    await choice.selectOption('de-DE');
+    await page.waitForFunction(() => document.documentElement.lang === 'de-DE');
+    await press(page, '#btn-resume', touch);
+    await page.waitForFunction(() => document.getElementById('overlay-pause').hidden);
+    await page.waitForFunction(() => document.getElementById('btn-play').textContent.trim() === 'Spielen');
+    await page.screenshot({ path: SHOT('german-title', name) });
+    await press(page, '#btn-play', touch);
+    await screenVisible(page, 'modes');
+    await page.locator('#mode-cards .card[data-mode="journey"]').click();
+    await screenVisible(page, 'setup');
+    if ((await page.textContent('#setup-h')).trim() !== 'Reise') throw new Error('setup not in German');
+    await page.locator('#setup-list .setup-item:not(:disabled)').first().click();
+    await waitPlayActive(page);
+    await page.waitForFunction(() => /^Ziel:/.test(document.getElementById('hud-sub').textContent));
+    await openMirror(page);
+    await page.locator('#mirror-list .btn').first().click();
+    await page.waitForFunction(() => /\d+ Steine?$/.test(document.getElementById('hud-progress').textContent));
+    const tilesBefore = (await page.textContent('#hud-progress')).trim();
+    // HUD bars and buttons must not overlap at this width.
+    const overlap = await page.evaluate(() => {
+      const r = (sel) => document.querySelector(sel).getBoundingClientRect();
+      const top = r('.hud-top'), bottom = r('.hud-bottom');
+      const btns = [...document.querySelectorAll('.hud-actions .btn')].map((b) => b.getBoundingClientRect());
+      const cut = btns.some((b) => b.right > innerWidth + 0.5 || b.left < -0.5);
+      return { overlap: top.bottom > bottom.top, cut };
+    });
+    if (overlap.overlap || overlap.cut) throw new Error('German HUD overlaps or is cut off: ' + JSON.stringify(overlap));
+    await page.screenshot({ path: SHOT('german-play', name) });
+    ok(`${name}: German round shows German HUD (${tilesBefore}), nothing overlaps`);
+
+    // Back to Automatic mid-round from the pause menu.
+    await press(page, '#btn-pause', touch);
+    await page.waitForFunction(() => !document.getElementById('overlay-pause').hidden);
+    if ((await page.textContent('#pause-h')).trim() !== 'Pausiert') throw new Error('pause title not German');
+    await choice.scrollIntoViewIfNeeded();
+    await choice.selectOption('auto');
+    await page.waitForFunction(() => document.documentElement.lang === 'fr-CA');
+    if ((await page.textContent('#pause-h')).trim() !== 'En pause') throw new Error('pause title not re-rendered');
+    await press(page, '#btn-resume', touch);
+    await page.waitForFunction(() => /^Objectif/.test(document.getElementById('hud-sub').textContent));
+    const tilesAfter = (await page.textContent('#hud-progress')).trim();
+    if (tilesAfter.replace(/\D/g, '') !== tilesBefore.replace(/\D/g, '')) throw new Error(`round restarted: ${tilesBefore} → ${tilesAfter}`);
+    if (!(await page.locator('#mirror-list .btn').first().textContent())) throw new Error('mirror empty');
+    ok(`${name}: Automatic mid-round re-renders HUD in French without restarting (${tilesAfter})`);
+  } finally {
+    await context.close();
+  }
+  if (errors.length) throw new Error(`${name} language pass had page errors:\n  ${errors.join('\n  ')}`);
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -457,6 +567,8 @@ try {
   await runPass(browser, 'desktop', { viewport: { width: 1280, height: 800 } }, { full: true });
   await runPass(browser, 'mobile',
     { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, { full: false });
+  await languagePass(browser, 'desktop', { viewport: { width: 1280, height: 800 } });
+  await languagePass(browser, 'mobile', { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   console.log('\nE2E PASS — trio-tiles, desktop + mobile, no page errors');
 } catch (e) {
   failures++;
