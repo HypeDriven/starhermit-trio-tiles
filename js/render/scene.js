@@ -48,18 +48,20 @@ import {
   disposeTextureSets,
 } from './materials.js';
 import { CameraRig, CAMERA_ANCHORS } from './camera.js';
-import { detectPreset, resolve, describe, SHADOW_MAP, PARTICLES } from './gfx.js';
+import { detectLevel, presetForLevel, resolve, describe, particleCounts, SHADOW_MAP, PARTICLES, PARTICLE_POOL } from './gfx.js';
 
 const LAYER_ENV = 0;
 const LAYER_GAME = 1;
 const LAYER_SELECT = 2;
 const LAYER_FX = 3;
 
-// Pools are allocated once at the largest tier; tiers only change draw counts.
-const MAX_PETALS = PARTICLES.high.petals;
-const MAX_MIST = PARTICLES.high.mist;
-const MAX_STEAM = PARTICLES.high.steam;
-const MAX_BURST = 140;
+// Pools are allocated once at the largest budget (PARTICLE_POOL × the High tier); tiers and the
+// preset's particle multiplier only change draw counts.
+const MAX_PETALS = PARTICLES.high.petals * PARTICLE_POOL;
+const MAX_MIST = PARTICLES.high.mist * PARTICLE_POOL;
+const MAX_STEAM = PARTICLES.high.steam * PARTICLE_POOL;
+const BURST_BASE = 140;
+const MAX_BURST = BURST_BASE * PARTICLE_POOL;
 const MAX_ISLANDS = 6;
 const STEAM_ORIGIN = new THREE.Vector3(-3.42, 0.95, -2.2); // teapot spout tip
 
@@ -160,8 +162,15 @@ export class TeaScene {
     r.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer = r;
     this.gpu = readGpuName(r);
-    this.detected = detectPreset(this.gpu, { mobile: isTouchDevice() });
-    this.q = resolve(this.gfxSaved, this.detected);
+    // StarHermit hardware level (gpu-level.js): renderer string + device facts (phone/tablet, cores, memory).
+    let sys = { mobile: isTouchDevice() };
+    try {
+      const G = globalThis.StarHermitGpu;
+      if (G) { const d = G.detectSystem(); sys = { ...d, mobile: sys.mobile || d.mobile }; delete sys.gpu; }
+    } catch { /* defaults */ }
+    this.gpuLevel = detectLevel(this.gpu, sys);
+    this.detected = presetForLevel(this.gpuLevel);
+    this.q = resolve(this.gfxSaved, this.detected, this.gpuLevel);
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(38, 1, 0.1, 200);
@@ -196,7 +205,8 @@ export class TeaScene {
     this.trayGroup = new THREE.Group();
     this.scene.add(this.trayGroup);
 
-    this.tileGeometry = createTileGeometry();
+    this.tileGeometry = createTileGeometry(this.q.budget.tileSeg);
+    this._tileSegKey = String(this.q.budget.tileSeg);
     this._buildTray();
     this._buildSelectionAids();
     this._buildVFXPools();
@@ -239,7 +249,7 @@ export class TeaScene {
   /** Apply saved Graphics settings ({} = Auto). */
   setGraphics(saved) {
     this.gfxSaved = saved ?? {};
-    this.q = resolve(this.gfxSaved, this.detected);
+    this.q = resolve(this.gfxSaved, this.detected, this.gpuLevel);
     this.adaptiveScale = 1;
     this._frames = [];
     this._applyGraphics();
@@ -274,12 +284,23 @@ export class TeaScene {
       this.scene.environmentIntensity = 1;
     }
     // Particles: draw counts only (pools are allocated at the top tier).
-    const pc = PARTICLES[g.particles];
-    this.petals.count = pc.petals;
-    this.mist.geometry.setDrawRange(0, pc.mist);
-    this.steam.geometry.setDrawRange(0, pc.steam);
+    const pc = particleCounts(g);
+    this.petals.count = Math.min(MAX_PETALS, pc.petals);
+    this.mist.geometry.setDrawRange(0, Math.min(MAX_MIST, pc.mist));
+    this.steam.geometry.setDrawRange(0, Math.min(MAX_STEAM, pc.steam));
     this.steam.visible = pc.steam > 0;
-    this.burstCount = Math.round(MAX_BURST * pc.burst);
+    this.burstCount = Math.min(MAX_BURST, Math.round(BURST_BASE * pc.burst));
+    // Preset budget: tile LOD, shading model and texture size; tea-set and table materials.
+    const segKey = String(g.budget.tileSeg);
+    if (this._tileSegKey !== segKey) {
+      this._tileSegKey = segKey;
+      const old = this.tileGeometry;
+      this.tileGeometry = createTileGeometry(g.budget.tileSeg);
+      for (const [, rec] of this.tiles) rec.mesh.geometry = this.tileGeometry;
+      old.dispose();
+    }
+    this._applyPropMaterials();
+    const tileKey = g.budget.material + '|' + g.budget.texture;
     // Detail: distant islands, table grain relief, glossy tiles.
     const islands = g.detail === 'detailed' ? MAX_ISLANDS : 2;
     this.islands.children.forEach((isl, i) => (isl.visible = i < islands));
@@ -291,8 +312,9 @@ export class TeaScene {
       this.tableMaterial.roughnessMap = detailed ? this.grainTexture : null;
       this.tableMaterial.needsUpdate = true;
     }
-    if (this._tileDetail !== detailed) {
+    if (this._tileDetail !== detailed || this._tileKey !== tileKey) {
       this._tileDetail = detailed;
+      this._tileKey = tileKey;
       this._rebuildTileMaterials();
     }
     if (shadowChanged) {
@@ -311,6 +333,37 @@ export class TeaScene {
     this.applyRenderScale();
   }
 
+  /** Shading model per the preset's budget: Lambert (Low), Standard (Balanced), Physical extras (High/Ultra). */
+  _surface(params, extras) {
+    const kind = this.q.budget.material;
+    if (kind === 'lambert') {
+      const { roughness, metalness, roughnessMap, envMapIntensity, ...rest } = params;
+      return new THREE.MeshLambertMaterial(rest);
+    }
+    if (kind === 'physical' && extras) return new THREE.MeshPhysicalMaterial({ ...params, ...extras });
+    return new THREE.MeshStandardMaterial(params);
+  }
+
+  /** Swap table, rock, tea-set and island materials when the preset's shading model changes. */
+  _applyPropMaterials() {
+    const kind = this.q.budget.material;
+    if (this._propKind === kind) return;
+    this._propKind = kind;
+    const made = new Map();
+    for (const mesh of [this.rock, this.teapot, ...this.cups.children, ...this.islands.children]) {
+      const spec = mesh.userData.surface;
+      if (!spec) continue;
+      if (!made.has(spec)) made.set(spec, this._surface(spec[0], spec[1]));
+      mesh.material.dispose();
+      mesh.material = made.get(spec);
+    }
+    // The table keeps its wood map; bump/roughness maps follow Surface detail below.
+    const old = this.tableMaterial;
+    this.tableMaterial = this._surface({ map: this._woodTexture, roughness: 0.62, metalness: 0.05 });
+    this.table.material = this.tableMaterial;
+    old?.dispose();
+  }
+
   /** Whether decorative motion runs (Background setting + reduced-motion preferences). */
   _ambientMoving() {
     return this.q.background === 'animated' && !this.reducedMotion && !this._prefersReduced?.matches;
@@ -322,6 +375,7 @@ export class TeaScene {
     return {
       gpu: this.gpu || 'unknown GPU',
       detected: this.detected,
+      level: this.gpuLevel,
       resolved: this.q,
       summary: describe(this.q, px, words),
       fps: Math.round(this.fps || 0),
@@ -345,7 +399,7 @@ export class TeaScene {
 
   _postKey(w, h) {
     const g = this.q;
-    return g.post && !this.postFailed ? [g.ao, g.bloom, g.grade, g.antialias, w, h, this.pixelRatio].join('|') : 'none';
+    return g.post && !this.postFailed ? [g.ao, g.bloom, g.grade, g.antialias, g.budget.bloomRes, g.budget.aoRes, w, h, this.pixelRatio].join('|') : 'none';
   }
 
   _buildPost(w, h) {
@@ -371,11 +425,11 @@ export class TeaScene {
         ao.blendIntensity = 0.75;
         ao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.6, thickness: 1.2, scale: 1.0, samples: g.ao === 'high' ? 16 : 8 });
         ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: g.ao === 'high' ? 6 : 4, rings: 2, samples: g.ao === 'high' ? 16 : 8 });
-        composer.addPass(ao);
+        composer.addPass(atScale(ao, g.budget.aoRes));
       }
       if (g.bloom === 'on') {
         // Threshold above lit ivory (the HDR buffer is pre-tone-mapping): only clearcoat glints and triple bursts bloom.
-        composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 0.4, 0.4, 1.25));
+        composer.addPass(atScale(new UnrealBloomPass(new THREE.Vector2(w, h), 0.4, 0.4, 1.25), g.budget.bloomRes));
       }
       if (g.grade === 'on') composer.addPass(new ShaderPass(GradeShader));
       composer.addPass(new OutputPass());
@@ -495,6 +549,7 @@ export class TeaScene {
     // Extrude UVs are in world units (table ≈ 12.8 × 9.2): ~2 grain repeats across.
     wood.repeat.set(0.16, 0.16);
     wood.anisotropy = 8;
+    this._woodTexture = wood;
     this.tableMaterial = new THREE.MeshStandardMaterial({ map: wood, roughness: 0.62, metalness: 0.05 });
     this.table = new THREE.Mesh(createTableGeometry(), this.tableMaterial);
     this.table.receiveShadow = true;
@@ -502,22 +557,26 @@ export class TeaScene {
     this.scene.add(this.table);
 
     this.rock = new THREE.Mesh(createRockGeometry(decor), new THREE.MeshStandardMaterial({ color: 0x5a4a42, roughness: 0.95, flatShading: true }));
+    this.rock.userData.surface = [{ color: 0x5a4a42, roughness: 0.95, flatShading: true }, null];
     this.rock.position.y = -2.6;
     this.rock.layers.set(LAYER_ENV);
     this.scene.add(this.rock);
 
     // Tea set props (signature storytelling, kept clear of the play area).
     const potMat = new THREE.MeshPhysicalMaterial({ color: 0x7a4a3a, roughness: 0.38, metalness: 0.05, clearcoat: 0.6, clearcoatRoughness: 0.2 });
-    this.teapot = new THREE.Mesh(createTeapotGeometry(), potMat);
+    this.teapot = new THREE.Mesh(createTeapotGeometry(this.q.budget.propSeg), potMat);
+    this.teapot.userData.surface = [{ color: 0x7a4a3a, roughness: 0.38, metalness: 0.05 }, { clearcoat: 0.6, clearcoatRoughness: 0.2 }];
     this.teapot.position.set(-4.6, 0.02, -2.2);
     this.teapot.scale.setScalar(1.4);
     this.teapot.castShadow = true;
     this.teapot.layers.set(LAYER_ENV);
     this.scene.add(this.teapot);
     const cupMat = new THREE.MeshPhysicalMaterial({ color: 0xe8dcc8, roughness: 0.35, clearcoat: 0.7, clearcoatRoughness: 0.15 });
+    this._cupSurface = [{ color: 0xe8dcc8, roughness: 0.35 }, { clearcoat: 0.7, clearcoatRoughness: 0.15 }];
     this.cups = new THREE.Group();
     for (let i = 0; i < 2; i++) {
-      const cup = new THREE.Mesh(createCupGeometry(), cupMat);
+      const cup = new THREE.Mesh(createCupGeometry(this.q.budget.propSeg), cupMat);
+      cup.userData.surface = this._cupSurface;
       cup.position.set(-3.4 + i * 0.8, 0.02, -2.9 + i * 0.35);
       cup.castShadow = true;
       cup.layers.set(LAYER_ENV);
@@ -528,8 +587,10 @@ export class TeaScene {
     // Distant islands + clouds, deterministic per scene seed.
     this.islands = new THREE.Group();
     const islandMat = new THREE.MeshStandardMaterial({ color: 0x6a7a5e, roughness: 0.9, flatShading: true });
+    this._islandSurface = [{ color: 0x6a7a5e, roughness: 0.9, flatShading: true }, null];
     for (let i = 0; i < MAX_ISLANDS; i++) {
       const isl = new THREE.Mesh(createIslandGeometry(decor, decor.range(1.2, 2.4)), islandMat);
+      isl.userData.surface = this._islandSurface;
       const a = decor.range(0, Math.PI * 2);
       const r = decor.range(16, 30);
       isl.position.set(Math.cos(a) * r, decor.range(-4, 3), Math.sin(a) * r - 8);
@@ -542,7 +603,7 @@ export class TeaScene {
     const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.16, depthWrite: false });
     this.clouds = new THREE.Group();
     for (let i = 0; i < 4; i++) {
-      const puff = new THREE.Mesh(new THREE.SphereGeometry(decor.range(2, 4), 10, 8), cloudMat);
+      const puff = new THREE.Mesh(new THREE.SphereGeometry(decor.range(2, 4), Math.max(6, Math.round(10 * this.q.budget.propSeg)), Math.max(5, Math.round(8 * this.q.budget.propSeg))), cloudMat);
       puff.scale.y = 0.35;
       puff.position.set(decor.range(-30, 30), decor.range(6, 12), decor.range(-34, -16));
       puff.userData.speed = decor.range(0.05, 0.16);
@@ -943,7 +1004,7 @@ export class TeaScene {
     disposeTextureSets(this.textureSets);
     this.materialCache.forEach((m) => m.dispose());
     this.materialCache.clear();
-    this.textureSets = buildTileTextures(this.level.symbolIds, this.theme, this.colorblindPalette);
+    this.textureSets = buildTileTextures(this.level.symbolIds, this.theme, this.colorblindPalette, this.q.budget.texture);
     for (const [, rec] of this.tiles) {
       if (rec.ownMaterial) {
         rec.mesh.material.dispose();
@@ -966,8 +1027,12 @@ export class TeaScene {
       metalness: 0.04,
       emissive: new THREE.Color(0x000000),
     };
-    // Detailed: lacquered tiles — clearcoat over a faintly mottled surface.
-    const mat = this._tileDetail
+    // Low: Lambert (colour, face art, bump and emission kept). Balanced: Standard. High/Ultra with
+    // Detail on: lacquered tiles — clearcoat over a faintly mottled surface.
+    const kind = this.q.budget.material;
+    const mat = kind === 'lambert'
+      ? new THREE.MeshLambertMaterial({ color: base.color, map: base.map, bumpMap: base.bumpMap, bumpScale: base.bumpScale, emissive: base.emissive })
+      : this._tileDetail && kind === 'physical'
       ? new THREE.MeshPhysicalMaterial({
           ...base,
           roughness: 0.5,
@@ -995,7 +1060,7 @@ export class TeaScene {
     }
     this.tiles.clear();
     this.tweens.length = 0;
-    this.textureSets = buildTileTextures(level.symbolIds, this.theme, this.colorblindPalette);
+    this.textureSets = buildTileTextures(level.symbolIds, this.theme, this.colorblindPalette, this.q.budget.texture);
 
     // Center the layout on the table.
     let minX = Infinity;
@@ -1557,4 +1622,13 @@ function skyColor(hex) {
 // Mist sprites take a little of the theme's haze so the cloud sea sits in the scene.
 function mistColor(theme) {
   return new THREE.Color(0xffffff).lerp(new THREE.Color(theme.fog), 0.35);
+}
+
+// Run a post pass at a fraction of the frame: EffectComposer.addPass/setSize hand every pass the full
+// frame size, so the pass's own setSize applies the budget's scale (half-res bloom/GTAO below Ultra).
+function atScale(pass, k) {
+  if (!(k < 1)) return pass;
+  const setSize = pass.setSize.bind(pass);
+  pass.setSize = (w, h) => setSize(Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k)));
+  return pass;
 }

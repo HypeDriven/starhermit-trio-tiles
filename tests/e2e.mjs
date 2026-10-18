@@ -263,6 +263,8 @@ async function graphicsCheck(page, name, touch) {
   await page.selectOption('#gfx-preset', 'low');
   await presetIs(page, 'low');
   await page.waitForFunction(() => /no shadows/.test(document.getElementById('gfx-summary').textContent));
+  const sumText = await page.textContent('#gfx-summary');
+  if (!/ · Level 0 · /.test(sumText)) throw new Error(`summary lacks the hardware level: ${sumText}`);
   await page.selectOption('#gfx-preset', 'high');
   await presetIs(page, 'high');
   await page.waitForFunction(() => /2048² shadows/.test(document.getElementById('gfx-summary').textContent));

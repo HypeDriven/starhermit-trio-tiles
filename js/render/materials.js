@@ -51,10 +51,12 @@ export function symbolColor(symId, palette = 'default') {
 
 const T = 256; // texture cell size
 
-function cellCanvas() {
+// Canvases are authored in a 256-unit space (T); `px` is the real size from the preset's texture budget.
+function cellCanvas(px = T) {
   const c = document.createElement('canvas');
-  c.width = T;
-  c.height = T;
+  c.width = px;
+  c.height = px;
+  if (px !== T) c.getContext('2d').scale(px / T, px / T);
   return c;
 }
 
@@ -287,12 +289,12 @@ function roundRectPath(ctx, x, y, w, h, r) {
  * Build the tile face texture set for a theme. Returns a map
  * symId -> { map, bump } of CanvasTextures shared by all tiles of that symbol.
  */
-export function buildTileTextures(symbolIds, theme, palette = 'default') {
+export function buildTileTextures(symbolIds, theme, palette = 'default', px = T) {
   const out = new Map();
   symbolIds.forEach((symId, i) => {
     const col = symbolColor(symId, palette);
 
-    const face = cellCanvas();
+    const face = cellCanvas(px);
     const f = face.getContext('2d');
     // Opaque ivory base (the material colour tints it per theme); a faint
     // radial falloff reads as a gently dished, hand-carved face.
@@ -316,7 +318,7 @@ export function buildTileTextures(symbolIds, theme, palette = 'default') {
     f.globalAlpha = 1;
     drawSymbolGlyph(f, symId, { ink: col, accent: col });
 
-    const bump = cellCanvas();
+    const bump = cellCanvas(px);
     const b = bump.getContext('2d');
     b.fillStyle = '#808080';
     b.fillRect(0, 0, T, T);

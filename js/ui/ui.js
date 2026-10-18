@@ -187,7 +187,7 @@ export class UI {
 
   updateGraphicsInfo(info) {
     if (!info) return;
-    $('gfx-summary').textContent = `${info.gpu} · ${info.summary}`;
+    $('gfx-summary').textContent = [info.gpu, Number.isFinite(info.level) ? this.gfxT.level(info.level) : null, info.summary].filter(Boolean).join(' · ');
     const note = $('gfx-post-note');
     note.hidden = !info.postFailed;
     note.textContent = info.postFailed ? this.gfxT.postUnavailable : '';

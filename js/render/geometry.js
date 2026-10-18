@@ -27,16 +27,16 @@ function roundedRectShape(w, h, r) {
   return s;
 }
 
-/** Carved tile body: rounded slab with a small bevel, UVs fit for face art. */
-export function createTileGeometry() {
+/** Carved tile body: rounded slab with a small bevel, UVs fit for face art. `seg` = [bevel, curve] segments (preset LOD). */
+export function createTileGeometry(seg = [2, 6]) {
   const shape = roundedRectShape(TILE_SIZE, TILE_SIZE, 0.14);
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth: TILE_THICK - 0.06,
     bevelEnabled: true,
     bevelThickness: 0.03,
     bevelSize: 0.03,
-    bevelSegments: 2,
-    curveSegments: 6,
+    bevelSegments: seg[0],
+    curveSegments: seg[1],
   });
   geo.rotateX(-Math.PI / 2); // lie flat, face up
   geo.translate(0, TILE_THICK / 2 + 0.015, 0);
@@ -95,7 +95,8 @@ export function createRockGeometry(rand, radius = 4.6, depth = 4.2) {
 }
 
 /** Tea pot from a lathe profile — the scene's signature prop. */
-export function createTeapotGeometry() {
+export function createTeapotGeometry(k = 1) {
+  const n = (v, min) => Math.max(min, Math.round(v * k));
   const pts = [];
   const profile = [
     [0.0, 0.0],
@@ -111,21 +112,21 @@ export function createTeapotGeometry() {
     [0.0, 0.72],
   ];
   for (const [x, y] of profile) pts.push(new THREE.Vector2(x, y));
-  const body = new THREE.LatheGeometry(pts, 24);
+  const body = new THREE.LatheGeometry(pts, n(24, 12));
   // Spout: a bent small cylinder
-  const spout = new THREE.CylinderGeometry(0.05, 0.085, 0.5, 10, 4);
+  const spout = new THREE.CylinderGeometry(0.05, 0.085, 0.5, n(10, 6), 4);
   spout.translate(0, 0.25, 0);
   spout.rotateZ(-0.7);
   spout.translate(0.52, 0.28, 0);
   // Handle: half-torus
-  const handle = new THREE.TorusGeometry(0.22, 0.045, 8, 16, Math.PI);
+  const handle = new THREE.TorusGeometry(0.22, 0.045, n(8, 5), n(16, 8), Math.PI);
   handle.rotateZ(Math.PI / 2);
   handle.rotateY(Math.PI / 2);
   handle.translate(-0.52, 0.36, 0);
   return mergeGeometries([body, spout, handle]);
 }
 
-export function createCupGeometry() {
+export function createCupGeometry(k = 1) {
   const pts = [];
   const profile = [
     [0.0, 0.0],
@@ -139,7 +140,7 @@ export function createCupGeometry() {
     [0.0, 0.05],
   ];
   for (const [x, y] of profile) pts.push(new THREE.Vector2(x, y));
-  return new THREE.LatheGeometry(pts, 20);
+  return new THREE.LatheGeometry(pts, Math.max(10, Math.round(20 * k)));
 }
 
 /** Minimal merge (positions/normals/uvs) to avoid pulling in addons. */

@@ -32,6 +32,7 @@ const EN = {
   adaptive: 'Adaptive resolution',
   showFps: 'Show frame rate',
   postUnavailable: 'Post-processing is unavailable on this device, so the table is drawn without it.',
+  level: (n) => `Level ${n}`,
   words: {
     noShadows: 'no shadows',
     shadows: (n) => `${n}² shadows`,
@@ -75,6 +76,7 @@ const ES_419 = {
   adaptive: 'Resolución adaptable',
   showFps: 'Mostrar cuadros por segundo',
   postUnavailable: 'El posprocesamiento no está disponible en este dispositivo; la mesa se dibuja sin él.',
+  level: (n) => `Nivel ${n}`,
   words: {
     noShadows: 'sin sombras',
     shadows: shadowsN('sombras'),
@@ -120,6 +122,7 @@ const DE = {
   adaptive: 'Adaptive Auflösung',
   showFps: 'Bildrate anzeigen',
   postUnavailable: 'Nachbearbeitung ist auf diesem Gerät nicht verfügbar; der Tisch wird ohne sie gezeichnet.',
+  level: (n) => `Stufe ${n}`,
   words: {
     noShadows: 'keine Schatten',
     shadows: shadowsN('Schatten'),
@@ -158,6 +161,7 @@ const FR = {
   adaptive: 'Résolution adaptative',
   showFps: 'Afficher les images par seconde',
   postUnavailable: 'Le post-traitement n’est pas disponible sur cet appareil ; la table est dessinée sans.',
+  level: (n) => `Niveau ${n}`,
   words: {
     noShadows: 'sans ombres',
     shadows: shadowsN('ombres'),
@@ -175,6 +179,7 @@ const FR_CA = {
   categories: { ...FR.categories, antialias: 'Anticrénelage (lissage)' },
   showFps: 'Afficher la fréquence d’images',
   postUnavailable: 'Le post-traitement n’est pas offert sur cet appareil; la table est dessinée sans.',
+  level: (n) => `Niveau ${n}`,
 };
 
 const PT_BR = {
@@ -203,6 +208,7 @@ const PT_BR = {
   adaptive: 'Resolução adaptável',
   showFps: 'Mostrar taxa de quadros',
   postUnavailable: 'O pós-processamento não está disponível neste dispositivo; a mesa é desenhada sem ele.',
+  level: (n) => `Nível ${n}`,
   words: {
     noShadows: 'sem sombras',
     shadows: shadowsN('sombras'),
@@ -241,6 +247,7 @@ const IT = {
   adaptive: 'Risoluzione adattiva',
   showFps: 'Mostra frequenza fotogrammi',
   postUnavailable: 'La post-elaborazione non è disponibile su questo dispositivo; il tavolo viene disegnato senza.',
+  level: (n) => `Livello ${n}`,
   words: {
     noShadows: 'nessuna ombra',
     shadows: shadowsN('ombre'),
