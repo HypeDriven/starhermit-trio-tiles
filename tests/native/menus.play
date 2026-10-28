@@ -1,0 +1,80 @@
+# Every screen the title links: settings, help, the rename field, the modes and each setup list,
+# Score Chase's board, then a round's pause overlay with its settings, help and leave.
+frames 120
+save m-title
+click =Settings
+frames 10
+expect Symbol palette
+save m-settings
+click =Done
+frames 10
+click =How to Play
+frames 10
+expect The tray holds seven tiles
+save m-help
+click =Back
+frames 10
+click =Guest
+frames 10
+type Tamsin
+key Enter 1
+frames 10
+expect Tamsin
+click =Daily Steep
+frames 10
+expect Play today
+save m-daily
+click =Back
+frames 10
+click Learn
+frames 10
+expect Picking Tiles
+click =Back
+frames 10
+click Practice
+frames 10
+expect Expert
+click =Back
+frames 10
+click Challenge
+frames 10
+expect Six Cups
+click =Back
+frames 10
+click Score Chase
+frames 10
+click Daily board
+frames 10
+expect Local bests
+save m-boards
+click =Back
+frames 10
+click =Back
+frames 10
+click =Journey
+frames 10
+click First Steeps 1
+until 900 =Pause
+frames 30
+key Escape 1
+frames 10
+expect Paused
+expect Leave round
+save m-pause
+click =Help
+frames 10
+click =Back
+frames 10
+expect Paused
+click =Resume
+frames 10
+click =Pause
+frames 10
+click =Leave round
+until 900 Round over
+frames 10
+expect You left the round
+save m-left
+click =Retry
+until 900 =Pause
+frames 10

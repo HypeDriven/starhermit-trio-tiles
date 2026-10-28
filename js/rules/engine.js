@@ -218,7 +218,8 @@ function fail(reason) {
 // ---------------------------------------------------------------------------
 
 function cloneState(state) {
-  return structuredClone(state);
+  // JSON clone: the native interpreter has no structuredClone (the state is plain JSON data).
+  return JSON.parse(JSON.stringify(state));
 }
 
 function recomputeTotal(score) {

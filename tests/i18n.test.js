@@ -1,4 +1,4 @@
-// Every string key used in markup (data-i18n*) and code (t('…')) exists in all
+// Every string key the engine client uses (native/*.ts T("…")) exists in all
 // nine locales with the same {placeholders} as US English, and every content
 // name (symbols, chapters, themes, difficulties, challenges, lessons, lesson
 // steps, achievements) is translated.
@@ -10,25 +10,14 @@ import { SYMBOLS } from '../js/rules/layout.js';
 import { JOURNEY_CHAPTERS, THEMES, PRACTICE_DIFFICULTIES, CHALLENGES, LESSONS, ACHIEVEMENTS } from '../js/rules/content.js';
 
 const LOCALES = ['en-US', 'en-GB', 'es-419', 'es-ES', 'de-DE', 'fr-FR', 'fr-CA', 'pt-BR', 'it-IT'];
+import { ENGINE_STRINGS } from '../js/ui/engine-strings.js';
 const root = new URL('../', import.meta.url);
-function walk(dir) {
-  return readdirSync(new URL(dir, root)).flatMap((f) => {
-    const rel = dir + f;
-    if (f === 'vendor') return [];
-    return statSync(new URL(rel, root)).isDirectory() ? walk(rel + '/') : rel.endsWith('.js') && !rel.endsWith('strings.js') ? [rel] : [];
-  });
-}
-const code = walk('js/').map((f) => readFileSync(new URL(f, root), 'utf8')).join('\n');
-const html = readFileSync(new URL('index.html', root), 'utf8');
+const code = readdirSync(new URL('native/', root)).filter((f) => f.endsWith('.ts')).map((f) => readFileSync(new URL('native/' + f, root), 'utf8')).join('\n');
 const used = new Set();
-for (const m of code.matchAll(/\bt\('([A-Za-z0-9]+)'/g)) used.add(m[1]);
-for (const m of code.matchAll(/(?:_caption|onCaption)\('([A-Za-z0-9]+)'/g)) used.add(m[1]);
-for (const m of code.matchAll(/\? '(cap[A-Z]\w*)' : '(cap[A-Z]\w*)'/g)) { used.add(m[1]); used.add(m[2]); }
-for (const m of html.matchAll(/data-i18n(?:-aria|-title)?="([A-Za-z0-9]+)"/g)) used.add(m[1]);
-// Keys reached through lookup tables in main.js.
-for (const m of code.matchAll(/:\s*'((?:end|rsn|name|col|lb)[A-Z]\w*)'/g)) used.add(m[1]);
-const PLATFORM = new Set(['lbPosting', 'lbRank', 'lbPosted', 'lbNotPosted']);
-for (const k of PLATFORM) used.delete(k);
+for (const m of code.matchAll(/\bT\("([A-Za-z0-9]+)"/g)) used.add(m[1]);
+// Keys reached through lookup tables and the sound captions.
+for (const m of code.matchAll(/"((?:end|rsn|name|col|cap|sync|score|tiles|status)[A-Z]\w*)"/g)) if (m[1] in STRINGS['en-US'] || m[1] in ENGINE_STRINGS['en-US']) used.add(m[1]);
+const ALL = Object.fromEntries(Object.keys(STRINGS).map((l) => [l, { ...STRINGS[l], ...ENGINE_STRINGS[l] }]));
 const vars = (s) => [...String(s).matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(',');
 
 test('ships the nine locales', () => assert.deepEqual(Object.keys(STRINGS).sort(), [...LOCALES].sort()));
@@ -37,13 +26,16 @@ test('every locale has exactly the US English keys', () => {
   for (const loc of LOCALES) assert.deepEqual(Object.keys(STRINGS[loc]).sort(), en, loc);
 });
 // Keys built from string tables (['colPlayer', …].map(t)) count as used too.
-for (const m of code.matchAll(/'([a-z][A-Za-z0-9]+)'/g)) if (m[1] in STRINGS['en-US'] && typeof STRINGS['en-US'][m[1]] === 'string' && /^(col|name|tiles|status)/.test(m[1])) used.add(m[1]);
-test('found the keys in markup and code', () => assert.ok(used.size > 150, String(used.size)));
+test('engine strings ship the nine locales with the same keys', () => {
+  const en = Object.keys(ENGINE_STRINGS['en-US']).sort();
+  for (const loc of LOCALES) assert.deepEqual(Object.keys(ENGINE_STRINGS[loc]).sort(), en, loc);
+});
+test('found the keys in code', () => assert.ok(used.size > 150, String(used.size)));
 for (const loc of LOCALES) {
   test(`${loc}: every used key, matching placeholders`, () => {
-    const L = STRINGS[loc];
+    const L = ALL[loc];
     assert.deepEqual([...used].filter((k) => typeof L[k] !== 'string'), []);
-    for (const k of used) assert.equal(vars(L[k]), vars(STRINGS['en-US'][k]), `${loc}.${k}`);
+    for (const k of used) assert.equal(vars(L[k]), vars(ALL['en-US'][k]), `${loc}.${k}`);
   });
   test(`${loc}: every content name`, () => {
     const L = STRINGS[loc];
@@ -71,7 +63,7 @@ test('English content strings match the authored data', () => {
 });
 test('non-English locales are translated', () => {
   for (const loc of LOCALES.filter((l) => !l.startsWith('en'))) {
-    const same = [...used].filter((k) => STRINGS[loc][k] === STRINGS['en-US'][k] && !/\{chapter\} \{n\}/.test(STRINGS[loc][k]));
+    const same = [...used].filter((k) => ALL[loc][k] === ALL['en-US'][k] && !/\{chapter\} \{n\}/.test(STRINGS[loc][k]));
     assert.ok(same.length < 12, `${loc}: ${same.join(', ')}`);
   }
 });

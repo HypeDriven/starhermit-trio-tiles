@@ -1,0 +1,123 @@
+/* Trio Tiles — the browser build's css/main.css rewritten class-based for the
+   engine's UI (`npm run css` converts it into assets/ui-style.json). Element
+   selectors, ids, body classes (larger-text, high-contrast, reduced-motion,
+   left-handed) and @media do not convert: every widget names its classes,
+   the breakpoints are layouts picked in native/screens.ts, high contrast is
+   the token set native/style.ts applies, larger text is the runtime's text
+   scale. 1rem = 16px. */
+
+:root {
+  --ink: #f3e8d8; --ink-dim: #c9b9a4; --panel: rgba(28, 20, 14, 0.88); --panel-solid: #241a12; --edge: #4a3626;
+  --accent: #e0a05a; --accent-strong: #f0bc74; --danger: #d05a4a; --ok: #7ac88a; --focus: #ffd98a;
+}
+* { box-sizing: border-box; }
+
+/* ------------------------------------------------------------- text */
+.text { color: var(--ink); font-size: 16px; }
+.dim { color: var(--ink-dim); font-size: 14.4px; }
+.h1 { color: var(--ink); font-size: 25.6px; font-weight: 700; text-align: center; }
+.h1-start { color: var(--ink); font-size: 25.6px; font-weight: 700; }
+.h3 { color: var(--ink); font-size: 18.7px; font-weight: 700; }
+.tagline { color: var(--ink-dim); font-size: 16px; text-align: center; }
+.logo { color: var(--accent); font-size: 40px; text-align: center; }
+.card-title { color: var(--accent-strong); font-size: 16px; font-weight: 700; }
+.card-desc { color: var(--ink-dim); font-size: 14.7px; }
+.card-meta { color: var(--ok); font-size: 13.6px; }
+.chapter { color: var(--accent-strong); font-size: 16px; font-weight: 700; }
+.item-label { color: var(--ink); font-size: 16px; }
+.item-label-off { color: #8a7d6e; font-size: 16px; }
+.meta { color: var(--ink-dim); font-size: 13.6px; text-align: end; }
+.hud-h { color: var(--ink); font-size: 17.6px; font-weight: 700; }
+.hud-sub { color: var(--ink-dim); font-size: 14.4px; }
+.stat-text { color: var(--ink); font-size: 16px; }
+.slot-text { color: var(--ink); font-size: 15.2px; font-weight: 700; text-align: center; }
+.banner-text { color: var(--ink); font-size: 16px; }
+.caption-text { color: var(--ink); font-size: 14.4px; text-align: center; }
+.stars { color: var(--accent-strong); font-size: 22.4px; letter-spacing: 3.4px; text-align: center; }
+.score-k { color: var(--ink); font-size: 16px; }
+.score-v { color: var(--ink); font-size: 16px; text-align: end; }
+.total-k { color: var(--accent-strong); font-size: 18.4px; }
+.total-v { color: var(--accent-strong); font-size: 18.4px; text-align: end; }
+.ach-text { color: var(--ok); font-size: 14.4px; }
+.legend { color: var(--accent-strong); font-size: 16px; }
+.badge-text { color: var(--ok); font-size: 12.8px; }
+.badge-dim-text { color: var(--ink-dim); font-size: 12.8px; }
+.link-text { color: var(--accent-strong); font-size: 14.4px; }
+.wrap { color: var(--ink); font-size: 16px; text-align: center; }
+
+/* ------------------------------------------------------------- surfaces */
+.panel { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: 20px 24px; }
+.panel-solid { background: var(--panel-solid); border: 1px solid var(--edge); border-radius: 12px; padding: 20px 24px; }
+.hud-top { background: linear-gradient(rgba(20, 14, 9, 0.75), rgba(20, 14, 9, 0)); border-radius: 0; padding: 8px 12px 0 12px; }
+.hud-bottom { background: linear-gradient(rgba(20, 14, 9, 0), rgba(20, 14, 9, 0.8)); border-radius: 0; padding: 0 12px 9.6px 12px; }
+.plain { border-radius: 0; padding: 0; }
+.stat { background: var(--panel); border: 1px solid var(--edge); border-radius: 999px; padding: 2.4px 11.2px; }
+.banner { background: var(--panel); border: 1px solid var(--accent); border-radius: 12px; padding: 9.6px 17.6px; }
+.slot { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--edge); border-radius: 8px; }
+.slot-filled { background: #3a2c1e; border: 1px solid var(--edge); border-radius: 8px; }
+.slot-danger { background: rgba(0, 0, 0, 0.45); border: 1px solid var(--danger); border-radius: 8px; }
+.mirror { background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; padding: 6.4px 11.2px; }
+.caption { background: rgba(0, 0, 0, 0.75); border-radius: 8px; padding: 2.4px 12.8px; }
+.fieldset { border: 1px solid var(--edge); border-radius: 10px; padding: 9.6px 12px; }
+.badge { border: 1px solid var(--ok); border-radius: 999px; padding: 0 8px; }
+.badge-dim { border: 1px solid var(--ink-dim); border-radius: 999px; padding: 0 8px; }
+.ach { border: 1px solid var(--ok); border-radius: 999px; padding: 1.6px 12.8px; }
+.score-row { border-bottom: 1px solid var(--edge); border-radius: 0; padding: 4px 14.4px; }
+.total-row { border-radius: 0; padding: 4px 14.4px; }
+
+/* ------------------------------------------------------------- buttons */
+.btn {
+  min-height: 44px; min-width: 44px; padding: 8.8px 17.6px; background: #33241a; border: 1px solid var(--edge); border-radius: 10px;
+  color: var(--ink); font-size: 16px; text-align: center;
+}
+.btn:hover { background: #40301f; }
+.btn:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.btn:disabled { opacity: 0.45; }
+.btn-hud {
+  min-height: 44px; min-width: 44px; padding: 6.4px 14.4px; background: #33241a; border: 1px solid var(--edge); border-radius: 10px;
+  color: var(--ink); font-size: 16px; text-align: center;
+}
+.btn-hud:hover { background: #40301f; }
+.btn-hud:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.btn-hud:disabled { opacity: 0.45; }
+.btn-primary {
+  min-height: 44px; min-width: 44px; padding: 8.8px 17.6px; background: var(--accent); border: 1px solid var(--accent-strong); border-radius: 10px;
+  color: #241608; font-size: 16px; font-weight: 600; text-align: center;
+}
+.btn-primary:hover { background: var(--accent-strong); }
+.btn-primary:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.btn-big {
+  min-height: 44px; min-width: 44px; padding: 14.4px 48px; background: var(--accent); border: 1px solid var(--accent-strong); border-radius: 10px;
+  color: #241608; font-size: 20.8px; font-weight: 600; text-align: center;
+}
+.btn-big:hover { background: var(--accent-strong); }
+.btn-big:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.btn-danger {
+  min-height: 44px; min-width: 44px; padding: 8.8px 17.6px; background: #33241a; border: 1px solid var(--danger); border-radius: 10px;
+  color: #f2b0a6; font-size: 16px; text-align: center;
+}
+.btn-danger:hover { background: #40301f; }
+.btn-danger:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.btn-link { min-height: 24px; padding: 3.2px; border-radius: 4px; color: var(--accent-strong); font-size: 14.4px; }
+.btn-link:hover { background: #33241a; }
+.btn-link:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.card {
+  min-height: 44px; padding: 14.4px 16px; background: #2c1f15; border: 1px solid var(--edge); border-radius: 12px; text-align: start;
+}
+.card:hover { background: #3a2a1c; border: 1px solid var(--accent); }
+.card:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.card-static { padding: 14.4px 16px; background: #2c1f15; border: 1px solid var(--edge); border-radius: 12px; }
+.item {
+  min-height: 44px; padding: 8px 14.4px; background: #2c1f15; border: 1px solid var(--edge); border-radius: 10px; text-align: start;
+}
+.item:hover { border: 1px solid var(--accent); }
+.item:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.item:disabled { opacity: 0.45; }
+.mirror-btn {
+  min-height: 40px; padding: 4.8px 8px; background: #33241a; border: 1px solid var(--edge); border-left: 6px solid var(--edge); border-radius: 10px;
+  color: var(--ink); font-size: 14.4px; text-align: center;
+}
+.mirror-btn:hover { background: #40301f; }
+.mirror-btn:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.select { min-height: 36px; padding: 4.8px 8px; background: #33241a; border: 1px solid var(--edge); border-radius: 8px; color: var(--ink); font-size: 16px; }
+.field { min-height: 40px; padding: 6px 10px; background: #33241a; border: 1px solid var(--edge); border-radius: 8px; color: var(--ink); font-size: 16px; }

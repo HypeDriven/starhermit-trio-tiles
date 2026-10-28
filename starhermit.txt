@@ -1,15 +1,47 @@
 name=Trio Tiles
 description=Select exposed tiles into a seven-slot tray, matching three identical symbols to clear them before the tray fills.
-launch=index.html
 owner=2712e04e-461b-4d23-81ae-e40b429128a8
 server=score-script.js
 cover=cover.jpg
+
+# StarHermit engine script game: one package, played natively by the
+# StarHermit client and in browsers by the engine's web runtime. Browsers open
+# launch=index.html, the loader `npm run package` writes (it pins the engine
+# on wiki.starhermit.com by hash; never edit it). Re-run `npm run package`
+# after every change and commit index.html + starhermit-files.json.
+launch=index.html
+engine.api=1
+engine.entry=native/main.ts
+engine.version=1.21.0
+engine.minor=23
+engine.capabilities=platform,storage,clipboard
+
+# Keyboard actions (players rebind keys and pads in the runtime's Options);
+# the names are the browser build's, so bindings saved with the account carry
+# over. The table is also played with the pointer or a finger: tap (or click)
+# an uncovered tile to lift it into the tray; the board mirror lists a button
+# per available tile.
+engine.group.focus_left=Tiles
 control.focus_left=ArrowLeft | Focus tile left
 control.focus_right=ArrowRight | Focus tile right
 control.focus_up=ArrowUp | Focus tile up
 control.focus_down=ArrowDown | Focus tile down
 control.pick=Enter+Space+NumpadEnter | Pick focused tile
+engine.group.undo=Round
 control.undo=KeyU | Undo
 control.hint=KeyH | Hint
 control.camera=KeyC | Reset camera
 control.pause=Escape | Pause / back
+
+# Gamepad (the browser build's polling): the D-pad or left stick moves the
+# focus, South (A) picks, West (X) hints, North (Y) undoes, Start or East (B)
+# pauses, the right shoulder resets the camera.
+engine.gamepad.focus_left=DpadLeft+LeftStickLeft
+engine.gamepad.focus_right=DpadRight+LeftStickRight
+engine.gamepad.focus_up=DpadUp+LeftStickUp
+engine.gamepad.focus_down=DpadDown+LeftStickDown
+engine.gamepad.pick=South
+engine.gamepad.hint=West
+engine.gamepad.undo=North
+engine.gamepad.camera=RightShoulder
+engine.gamepad.pause=Start+East
