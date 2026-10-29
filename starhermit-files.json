@@ -44,7 +44,7 @@
     "sfx/ui-click-b.opus": {"sha256": "f0f7b191bb195b7664f40e4bb17e3adc350dfdca56ab93049bf26af5ab578881", "size": 11912},
     "sfx/undo-swoop.opus": {"sha256": "d4fea062c771b5c477d814741366c1c2e316ee65e846bd367cbc5464e7d6b6eb", "size": 11302},
     "sfx/win-fanfare.opus": {"sha256": "71f1b512f0c602ccf4699a7553d3cf2eadc8b253e571c76bb65609eb1dd971db", "size": 43824},
-    "starhermit.txt": {"sha256": "bdb7ab5d281618cb2cb5ec930d1007365ec5f18467ee7ce6a309a3f5a24cc413", "size": 2028}
+    "starhermit.txt": {"sha256": "75545881ad699aa3470a63c62728e063f7762edf5b6156da0e0e55a6a169008c", "size": 2028}
   },
   "excluded": ["LICENSE.md", "coverart.png", "node_modules/", "package-lock.json", "package.json", "server.js", "sfx/manifest.json", "sfx/manifest.md", "spec.md", "test-results/", "tests/", "tools/", "tsconfig.json"],
   "format": 1
