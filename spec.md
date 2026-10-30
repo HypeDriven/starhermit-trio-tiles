@@ -5,7 +5,7 @@
 **Genre:** Selection puzzle  
 **Players:** 1 player; optional asynchronous score comparison  
 **Targets:** desktop browsers, mobile browsers, landscape and portrait where practical  
-**Rendering direction:** a StarHermit engine script game (TypeScript on the host API, engine 1.28.0, `engine.minor=30`): the table on `starhermit:scene`, the interface on `starhermit:ui`; played natively by the StarHermit client and in browsers by the engine's web runtime
+**Rendering direction:** a StarHermit engine script game (TypeScript on the host API, engine 1.29.0, `engine.minor=31`): the table on `starhermit:scene`, the interface on `starhermit:ui`; played natively by the StarHermit client and in browsers by the engine's web runtime
 
 ## 1. Product vision
 
@@ -165,7 +165,7 @@ The runtime's Options choose the graphics level (Auto from the device, render sc
 |---|---|---|---|---|
 | Shadows | off | 1024² | 2048² | 4096² |
 | Ambient occlusion (GTAO) | off | off | on | high |
-| Bloom (0.4 / 0.4 / 1.25, bloom model "r160" at the page strength 0.4, minor 30) · linear grade (over-range kept) + vignette | off | on | on | on |
+| Bloom (0.4 / 0.4 / 1.25, bloom model "r160" at the page strength 0.4, minor 31) · linear grade (over-range kept) + vignette | off | on | on | on |
 | Antialiasing | off | FXAA | SMAA | MSAA |
 | Room reflections · islands · table bump/roughness · lacquered tiles | off | on | on | on |
 | Particles (petals, mist, steam, bursts) | low ×0.75 | medium | high | high ×1.25 |
@@ -208,7 +208,7 @@ No module may mutate rules state except through a validated command. Rendering c
 ## 6. StarHermit integration
 
 ### Packaging and launch
-- `starhermit.txt`: `launch=index.html` (the engine's web loader, written by `npm run package` with `starhermit-files.json`), `engine.entry=native/main.ts`, `engine.version=1.28.0`, `engine.minor=30`, capabilities platform, storage, clipboard; `server=score-script.js`.
+- `starhermit.txt`: `launch=index.html` (the engine's web loader, written by `npm run package` with `starhermit-files.json`), `engine.entry=native/main.ts`, `engine.version=1.29.0`, `engine.minor=31`, capabilities platform, storage, clipboard; `server=score-script.js`.
 - Controls: `control.*` actions focus_left/right/up/down (arrows), pick (Enter, Space, Numpad Enter), undo (U), hint (H), camera (C), pause (Esc); pads: D-pad / left stick focus, South picks, West hints, North undoes, right shoulder resets the camera, Start or East pauses. Players rebind in the runtime's Options. Pointer / touch: tap or click an uncovered tile (taps over 12 px or 600 ms are camera gestures and ignored; with Hold to confirm a 400 ms press picks); presses that start on the interface never reach the table (`ui.pointerCaptured()`).
 - Signed out the game makes no platform calls beyond the runtime's own; the Daily Steep's day comes from the platform clock (`serverNow`) when it answered, else the device's UTC date.
 

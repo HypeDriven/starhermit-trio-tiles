@@ -3,7 +3,7 @@
 // script plus today's Daily Steep (generated here: the table follows the UTC
 // date) as signed-out offscreen runs (--render-check) driving the real UI, and
 // that the committed web index (starhermit-files.json) matches the files.
-// STARHERMIT names the runtime (default: the published 1.28.0 Linux runtime);
+// STARHERMIT names the runtime (default: the published 1.29.0 Linux runtime);
 // TSC the TypeScript compiler (default ~/sh/runtime/ts).
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { dailyScript } from '../tools/gen-plays.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const fallback = join(homedir(), 'sh/runtime/1.28.0/starhermit-1.28.0-linux-x86_64/starhermit');
+const fallback = join(homedir(), 'sh/runtime/1.29.0/starhermit-1.29.0-linux-x86_64/starhermit');
 const exe = process.env.STARHERMIT || (existsSync(fallback) ? fallback : null);
 const tsc = process.env.TSC || join(homedir(), 'sh/runtime/ts/node_modules/.bin/tsc');
 let failed = 0;
