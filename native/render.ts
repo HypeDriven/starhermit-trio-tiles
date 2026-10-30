@@ -773,8 +773,8 @@ export function applyLook(next: Look): void {
     blendIntensity: 0.75, radius: 0.45, distanceExponent: 1.6, thickness: 1.2, scale: 1, samples: g.ao === "high" ? 16 : 8, resolution: g.budget.aoRes,
     denoise: { lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: g.ao === "high" ? 6 : 4, rings: 2, samples: g.ao === "high" ? 16 : 8 },
   };
-  // r164 page bloom 0.4, squared for the r185 UnrealBloom of minor 29
-  renderer.bloom = g.bloom ? { strength: 0.16, radius: 0.4, threshold: 1.25, resolution: g.budget.bloomRes } : null;
+  // r164 page: r160 UnrealBloom at the page's strength
+  renderer.bloom = g.bloom ? { model: "r160", strength: 0.4, radius: 0.4, threshold: 1.25, resolution: g.budget.bloomRes } : null;
   // GradeShader before OutputPass (linear light): an 0.18 S-curve, saturation 1.07, cool shadows / warm highlights by a
   // smoothstep of luma 0.2–0.8, over-range light kept (mix(c, s + max(c - 1, 0), amount)), a 0.24 vignette from 0.42
   // to 0.9 (x × 1.1)
