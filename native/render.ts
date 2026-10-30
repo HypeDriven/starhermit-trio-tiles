@@ -739,7 +739,7 @@ export function applyLook(next: Look): void {
     if (!envRoom) {
       try {
         const pmrem = new PMREMGenerator(renderer);
-        envRoom = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+        const pageRoom = new RoomEnvironment(renderer); pageRoom.position.y = 0; /* the page's three r164 (pre-r183) builds the room at the origin */ envRoom = pmrem.fromScene(pageRoom, 0.04).texture;
         pmrem.dispose();
       } catch (e) { console.warn(`environment: ${String(e)}`); }
     }
