@@ -12,7 +12,7 @@ import * as C from '../js/rules/content.js';
 import { solve } from '../js/rules/solver.js';
 import { legalActions } from '../js/rules/engine.js';
 import { Session } from '../js/session/session.js';
-import { STRINGS } from '../js/ui/strings.js';
+const STRINGS_EN = JSON.parse((await import('node:fs')).readFileSync(new URL('../assets/strings.json', import.meta.url), 'utf8'))['en-US'];
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 function targets(state) {
@@ -20,7 +20,7 @@ function targets(state) {
   return legalActions(state).selectable.map((id) => byId.get(id)).sort((a, b) => b.z - a.z || a.gy - b.gy || a.gx - b.gx);
 }
 /** Key lines that pick `ids` in order (and the final state). */
-const NAMES = STRINGS['en-US'].symbols;
+const NAMES = Object.fromEntries(Object.entries(STRINGS_EN).filter(([k]) => k.startsWith('symbols.')).map(([k, v]) => [k.slice(8), v]));
 /** Key lines that pick `ids` in order (the first `press` of them by a click / touch on the tile's named area on the table). */
 export function picks(level, ids, press = 0, verb = 'click') {
   const s = new Session(level);

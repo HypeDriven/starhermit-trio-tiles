@@ -186,7 +186,7 @@ Within a tier the particle multiplier grows with the level index (≤ 2×). The 
 
 ### Localization
 
-- Every string ships in nine locales (en-US, en-GB, es-419, es-ES, de-DE, fr-FR, fr-CA, pt-BR, it-IT): `js/ui/strings.js`, `js/ui/platform-strings.js`, `js/ui/engine-strings.js` (strings the engine client added) and `js/ui/gfx-strings.js` (the Graphics heading). The language is the runtime's interface language (Options › Language, else the account's preferred language or the device's); a change shows on the next frame without restarting the round.
+- Every string ships in nine locales (en-US, en-GB, es-419, es-ES, de-DE, fr-FR, fr-CA, pt-BR, it-IT): `assets/strings.json` (on the engine's strings; account lines are the engine's `starhermit.*`; generated from the old `js/ui/strings.js`, `engine-strings.js` and `gfx-strings.js`) (the Graphics heading). The language is the runtime's interface language (Options › Language, else the account's preferred language or the device's); a change shows on the next frame without restarting the round.
 
 No module may mutate rules state except through a validated command. Rendering consumes immutable snapshots plus interpolation data. UI state and simulation state are separate so closing a drawer cannot affect a match.
 

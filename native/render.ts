@@ -734,7 +734,7 @@ export function applyLook(next: Look): void {
   const g = look;
   renderer.shadowMap.enabled = g.shadows > 0;
   keyLight.castShadow = g.shadows > 0;
-  if (g.shadows > 0) keyLight.shadow.mapSize = g.shadows;
+  if (g.shadows > 0) keyLight.shadow.mapSize = g.shadows; // the level's size: at minor 23+ the engine keeps what the game sets
   if (g.reflections) {
     if (!envRoom) {
       try {
@@ -769,12 +769,13 @@ export function applyLook(next: Look): void {
   islands.children.forEach((isl, i) => { isl.visible = i < (g.detailed ? MAX_ISLANDS : 2); });
   applyDetail();
   // post: GTAO (radius 0.45, distance exponent 1.6, thickness 1.2), UnrealBloom (0.4, 0.4, 1.25), the grade, AA
-  renderer.ao = g.ao === "off" ? null : {
-    blendIntensity: 0.75, radius: 0.45, distanceExponent: 1.6, thickness: 1.2, scale: 1, samples: g.ao === "high" ? 16 : 8, resolution: g.budget.aoRes,
-    denoise: { lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: g.ao === "high" ? 6 : 4, rings: 2, samples: g.ao === "high" ? 16 : 8 },
+  const ao = g.ao, hi = !!ao && ao.resolution >= 1; // the engine's "high": full-resolution AO
+  renderer.ao = !ao ? null : {
+    blendIntensity: 0.75, radius: 0.45, distanceExponent: 1.6, thickness: 1.2, scale: 1, samples: ao.samples, resolution: ao.resolution,
+    denoise: { lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: hi ? 6 : 4, rings: 2, samples: ao.denoiseSamples },
   };
   // r164 page: r160 UnrealBloom at the page's strength
-  renderer.bloom = g.bloom ? { model: "r160", strength: 0.4, radius: 0.4, threshold: 1.25, resolution: g.budget.bloomRes } : null;
+  renderer.bloom = g.bloom === null ? null : { model: "r160", strength: 0.4, radius: 0.4, threshold: 1.25, resolution: g.bloom };
   // GradeShader before OutputPass (linear light): an 0.18 S-curve, saturation 1.07, cool shadows / warm highlights by a
   // smoothstep of luma 0.2–0.8, over-range light kept (mix(c, s + max(c - 1, 0), amount)), a 0.24 vignette from 0.42
   // to 0.9 (x × 1.1)

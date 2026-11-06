@@ -1,0 +1,20 @@
+# Journey stage 1: a triple (burst, tray) and the hint, then the table idling, for tools/engine-tier-bench.mjs.
+# viewport 1280x800@1
+frames 60
+click =Play
+frames 10
+click Journey
+frames 10
+click First Steeps 1
+until 900 =Pause
+frames 120
+measure start
+key KeyH 1
+frames 30
+click Koi tile, layer 1, 2 of 12.
+frames 30
+click Koi tile, layer 1, 2 of 11.
+frames 30
+click Koi tile, layer 1, 3 of 10.
+frames 500
+measure stop

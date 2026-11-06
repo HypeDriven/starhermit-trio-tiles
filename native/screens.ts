@@ -16,7 +16,7 @@ import { frame, openMenu } from "starhermit:engine";
 import { bindings, primaryPointer, requestRebind } from "starhermit:input";
 import * as ui from "starhermit:ui";
 import { Content, Engine, type State } from "./game.ts";
-import { G, S, T, chapterName, fmtMs, levelName, playerName, symbolName, themeName, tn } from "./i18n.ts";
+import { S, T, chapterName, fmtMs, levelName, playerName, symbolName, themeName, tn } from "./i18n.ts";
 import * as platform from "./platform.ts";
 import * as render from "./render.ts";
 import {
@@ -29,12 +29,10 @@ import {
 interface Layout { lw: number; lh: number; sc: number; ox: number; oy: number; wide: boolean; phone: boolean; short: boolean }
 const lastSize = new Map<string, ui.Rect>();
 function layoutNow(): Layout {
-  const f = frame();
-  const sc = ui.preferences().scale;
-  const sa = f.safeArea;
-  const lw = Math.max(1, (f.width - sa.left - sa.right) / sc), lh = Math.max(1, (f.height - sa.top - sa.bottom) / sc);
+  const v = ui.viewport!();
+  const lw = Math.max(1, v.width), lh = Math.max(1, v.height);
   const short = lh <= 500 && lw > lh;
-  return { lw, lh, sc, ox: sa.left, oy: sa.top, wide: lw >= 1024 && !short, phone: lw < 640 && lh >= lw, short };
+  return { lw, lh, sc: v.scale, ox: v.x, oy: v.y, wide: lw >= 1024 && !short, phone: lw < 640 && lh >= lw, short };
 }
 function textWidth(text: string, style: string, kind?: "button"): number {
   return ui.measureText(text, { ...(kind ? { kind } : {}), style: [style] }).width / ui.preferences().scale;
@@ -61,19 +59,10 @@ function button(b: Btn): void {
   if (ui.style(style, s).id(b.id).button(b.name ?? b.text, opts) && fresh()) later(b.act);
 }
 /** .row-actions: buttons at their widths in rows that wrap at `width`. */
-function flow(label: string, list: Btn[], width: number, gap = 6, align: ui.Align = "center"): ui.Rect {
-  const rows: Btn[][] = [[]];
-  let used = 0;
-  const bw = (b: Btn): number => Math.min(width, b.width ?? buttonWidth(b.text, b.style ?? "btn"));
-  for (const b of list) {
-    const w = bw(b);
-    if (rows[rows.length - 1]!.length && used + gap + w > width) { rows.push([]); used = 0; }
-    used += (rows[rows.length - 1]!.length ? gap : 0) + w;
-    rows[rows.length - 1]!.push(b);
-  }
-  return ui.column(label, () => {
-    rows.forEach((row, ri) => ui.row(`${label}-r${ri}`, () => { for (const b of row) button({ ...b, width: bw(b) }); }, { spacing: gap }));
-  }, { spacing: gap, width, align });
+function flow(label: string, list: Btn[], width: number, gap = 6, justify: "start" | "center" = "center"): void {
+  ui.row(label, () => {
+    for (const b of list) button(b.width != null ? { ...b, width: Math.min(width, b.width) } : buttonWidth(b.text, b.style ?? "btn") > width ? { ...b, width } : b);
+  }, { wrap: true, width, gap, justify });
 }
 /** A wrapping check box (ui.checkbox labels do not wrap on phones). */
 function toggleRow(id: string, label: string, on: boolean, w: number, set: (v: boolean) => void): void {
@@ -613,7 +602,7 @@ function pauseBody(w: number, only: boolean): void {
   const s = settings();
   const fw = w - 26;
   ui.column("fs-display", () => {
-    ui.style("legend").label(G("graphics"));
+    ui.style("legend").label(T("gfxGraphics"));
     const cams = ["default", "top", "low"];
     selectRow("sel-camera", T("cameraView"), Math.max(0, cams.indexOf(s.cameraView)), [T("camDefault"), T("camTop"), T("camLow")], fw, (i) => setSetting({ cameraView: cams[i] }));
     const themes = ["auto", ...platform.store.doc.progression.unlockedThemes];

@@ -11,7 +11,7 @@
 // results with stars, achievements, the local boards and the score post, and
 // the lifecycle (a hidden window pauses the round). Screens are drawn by
 // screens.ts (starhermit:ui), the table by render.ts (starhermit:scene).
-import { frame, onPreferencesChange, onRender, onResume, onStart, onSuspend, onFixedUpdate, onUpdate, preferences, setFixedRate } from "starhermit:engine";
+import { afterRender, frame, levelSettings, onPreferencesChange, onRender, onResume, onStart, onSuspend, onFixedUpdate, onUpdate, preferences, setFixedRate } from "starhermit:engine";
 import { onAction, onPointerButton, onPointerMove, onTouch, vibrate } from "starhermit:input";
 import * as ui from "starhermit:ui";
 import { clipboard } from "starhermit:engine";
@@ -76,9 +76,8 @@ function flushAnnouncements(): void {
 }
 /** ui.js caption: 2.6 s. */
 export function caption(text: string): void { app.caption = { text, until: now() + 2.6 }; announce(text); }
-const pending: (() => void)[] = [];
 /** A widget's press, run once the frame's UI is built. */
-export function later(fn: () => void): void { pending.push(fn); }
+export function later(fn: () => void): void { afterRender(fn); }
 export function open(s: Screen, focus: string | null = null): void {
   app.screen = s;
   app.openedFrame = frame().frame;
@@ -306,20 +305,20 @@ function resolveRound(): void {
   const unlocked = checkAchievements();
   const ranked = mode !== "practice" && mode !== "learn";
   const postLb = ranked && platform.signedIn();
-  const board: ResultsSpec["board"] = postLb ? { key: "lbPosting", platform: true } : { key: ranked ? "localBestDevice" : "unrankedLocal" };
+  const board: ResultsSpec["board"] = postLb ? { key: "leaderboardPosting", platform: true } : { key: ranked ? "localBestDevice" : "unrankedLocal" };
   const breakdown = Engine.scoreBreakdown(state);
   const stars = won && level.star ? starsFor(result.score, level.star) : 0;
   const spec = (): ResultsSpec => ({
     won,
     reasonText: won ? T("clearedIn", { level: levelName(level), time: fmtMs(state.elapsedMs), moves: state.moves }) : reasonTextFor(state.terminalReason),
     rows: breakdown.rows, total: breakdown.total, stars,
-    achievements: unlocked.map((a) => { const [name, description] = tn<[string, string]>("achievements", a.key, [a.name, a.description]); return { name, description }; }),
+    achievements: unlocked.map((a) => { return { name: tn("achievements", `${a.key}.0`, a.name), description: tn("achievements", `${a.key}.1`, a.description) }; }),
     board, nextLabel: mode === "journey" && won ? T("nextStage") : T("continue"),
   });
   resolved = spec;
   if (postLb) {
     void platform.postScore(result.score).then((p) => {
-      const next = !p.posted ? { key: "lbNotPosted", platform: true } : p.rank ? { key: "lbRank", vars: { rank: p.rank }, platform: true } : { key: "lbPosted", platform: true };
+      const next = !p.posted ? { key: "leaderboardNotPosted", platform: true } : p.rank ? { key: "leaderboardRank", vars: { rank: p.rank }, platform: true } : { key: "leaderboardPosted", platform: true };
       Object.assign(board, next);
       if (app.session === s && app.phase === "results") announce(S(board.key, board.vars));
     });
@@ -433,7 +432,7 @@ export function signIn(): void { void requestSignIn().catch(() => undefined); }
 export function invite(): void {
   const link = platform.inviteLink();
   if (!link) return;
-  try { clipboard.writeText(link); caption(S("inviteCopied")); } catch { caption(S("inviteFailed", { link })); }
+  try { clipboard.writeText(link); caption(S("inviteCopied")); } catch { caption(S("inviteLink", { link })); }
 }
 
 // ------------------------------------------------------------------ keyboard focus (main.js _focusTargets / _moveFocus / _confirmFocus)
@@ -551,16 +550,16 @@ onFixedUpdate(() => {
 // ------------------------------------------------------------------ boot and lifecycle
 let lookKey = "";
 function applyLook(): void {
-  const f = frame();
-  const k = `${f.quality}:${f.levelIndex}`;
-  if (k === lookKey) return;
-  lookKey = k;
-  render.applyLook(lookFor(f.quality, f.levelIndex));
+  const level = frame().level;
+  if (level === lookKey) return;
+  lookKey = level;
+  render.applyLook(lookFor(levelSettings(level)));
 }
 onStart(() => {
   setFixedRate(STEP_RATE);
   initStyles();
   platform.initPlatform();
+  audio.loadSfx();
   render.setReducedMotion(preferences().reducedMotion);
   applyLook();
   applySettings();
@@ -591,8 +590,10 @@ onUpdate((dt) => {
 onRender(() => {
   const wasActive = app.phase === "active" && app.screen === null;
   drawScreens();
-  for (const fn of pending.splice(0)) fn();
-  pointerInput(wasActive);
-  render.update(frameDt);
-  flushAnnouncements();
+  // queued after this frame's presses (later), so they act on this frame's scene
+  afterRender(() => {
+    pointerInput(wasActive);
+    render.update(frameDt);
+    flushAnnouncements();
+  });
 });

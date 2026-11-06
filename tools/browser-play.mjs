@@ -28,7 +28,7 @@ const C = await import('../js/rules/content.js');
 const { winLine } = await import('./gen-plays.mjs');
 const { Session } = await import('../js/session/session.js');
 const { legalActions } = await import('../js/rules/engine.js');
-const { STRINGS } = await import('../js/ui/strings.js');
+const STRINGS_EN = JSON.parse((await import('node:fs')).readFileSync(new URL('../assets/strings.json', import.meta.url), 'utf8'))['en-US'];
 
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.ts': 'text/plain',
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml',
@@ -99,7 +99,7 @@ for (const v of views.filter((x) => !process.env.VIEWS || process.env.VIEWS.spli
     const byId = new Map(state.tiles.map((t) => [t.id, t]));
     return legalActions(state).selectable.map((id) => byId.get(id)).sort((a, b) => b.z - a.z || a.gy - b.gy || a.gx - b.gx);
   };
-  const NAMES = STRINGS['en-US'].symbols;
+  const NAMES = Object.fromEntries(Object.entries(STRINGS_EN).filter(([k]) => k.startsWith('symbols.')).map(([k, v]) => [k.slice(8), v]));
   try {
     await shot('title');
     if (v.name === 'desktop') {
