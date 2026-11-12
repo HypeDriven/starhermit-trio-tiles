@@ -1,3 +1,4 @@
+import { withLanguageRender as __l10nRender } from "./l10n/menu.ts";
 // Trio Tiles on the StarHermit engine: the entry module (starhermit.txt
 // engine.entry), played natively by the StarHermit client and in browsers by
 // the engine's web runtime. The rules, content, solver, session and save
@@ -587,7 +588,7 @@ onUpdate((dt) => {
   audio.update(dt);
   if (app.caption && app.caption.until < now()) app.caption = null;
 });
-onRender(() => {
+onRender(__l10nRender(() => {
   const wasActive = app.phase === "active" && app.screen === null;
   drawScreens();
   // queued after this frame's presses (later), so they act on this frame's scene
@@ -596,4 +597,8 @@ onRender(() => {
     render.update(frameDt);
     flushAnnouncements();
   });
-});
+}));
+
+// localization-runtime:menu
+import { installLanguageMenu as __installLanguageMenu } from "./l10n/menu.ts";
+__installLanguageMenu(false);
