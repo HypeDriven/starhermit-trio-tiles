@@ -119,7 +119,7 @@ function selectRow(id: string, label: string, index: number, options: string[], 
 }
 
 // ------------------------------------------------------------------ the frame
-export function drawScreens(): void {
+function drawScreensImmediate(): void {
   const L = layoutNow();
   const f = frame();
   const inPlay = !!app.session && (app.phase === "active" || app.phase === "paused" || app.phase === "resolving");
@@ -645,4 +645,11 @@ function pauseBody(w: number, only: boolean): void {
       { id: "btn-rebind", text: T("keyBindings"), act: () => requestRebind() },
     ], w);
   }, { spacing: 8, width: w });
+}
+
+export function drawScreens(): void {
+  if (!(app.screen === "help")) { drawScreensImmediate(); return; }
+  const actions = ["focus_left","focus_right","focus_up","focus_down","pick","undo","hint","camera","pause"];
+  const version = JSON.stringify([(app as any).settings ?? (app as any).options ?? {}, (platform as any).options ?? {}, actions.map((action) => bindings(action))]);
+  ui.retain!("help-screen", version, drawScreensImmediate);
 }

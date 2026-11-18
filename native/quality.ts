@@ -8,6 +8,7 @@
 // frame-rate limit and readout. The old per-category overrides are not offered
 // (the runtime's Options choose a level).
 import { levelSettings, type GraphicsLevel, type LevelSettings, type QualityTier } from "starhermit:engine";
+import type { AntialiasMode } from "starhermit:scene";
 
 export interface Budget {
   material: "lambert" | "standard" | "physical";
@@ -24,7 +25,7 @@ export interface Look {
   /** The level's bloom resolution, null = off. */
   bloom: number | null;
   grade: boolean;
-  antialias: "off" | "fxaa" | "smaa" | "msaa";
+  antialias: AntialiasMode;
   reflections: boolean;
   particles: "low" | "medium" | "high";
   animated: boolean;

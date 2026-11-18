@@ -5,7 +5,7 @@
 **Genre:** Selection puzzle  
 **Players:** 1 player; optional asynchronous score comparison  
 **Targets:** desktop browsers, mobile browsers, landscape and portrait where practical  
-**Rendering direction:** a StarHermit engine script game (TypeScript on the host API, engine 1.39.0, `engine.minor=39`): the table on `starhermit:scene`, the interface on `starhermit:ui`; played natively by the StarHermit client and in browsers by the engine's web runtime
+**Rendering direction:** a StarHermit engine script game (TypeScript on the host API, engine 1.44.1, `engine.minor=44`): the table on `starhermit:scene`, the interface on `starhermit:ui`; played natively by the StarHermit client and in browsers by the engine's web runtime
 
 ## 1. Product vision
 
@@ -202,13 +202,13 @@ No module may mutate rules state except through a validated command. Rendering c
 
 - Show useful progress by asset group; load core rules/UI first and scenic assets lazily. Provide procedural low-detail substitutes if optional assets fail.
 - Cache immutable hashed assets and the last safe local snapshot. Updates activate between rounds, never during one.
-- Recover WebGL context by rebuilding GPU resources from retained CPU descriptors. If 3D is unavailable, present a clear compatibility message and preserve account/session state.
+- Recover the graphics device by rebuilding GPU resources from retained CPU descriptors. If WebGPU is unavailable in a browser, present a clear compatibility message and preserve account/session state.
 - Background tabs reduce rendering to zero or a low heartbeat while preserving required network lifecycle.
 
 ## 6. StarHermit integration
 
 ### Packaging and launch
-- `starhermit.txt`: `launch=index.html` (the engine's web loader, written by `npm run package` with `starhermit-files.json`), `engine.entry=native/main.ts`, `engine.version=1.39.0`, `engine.minor=39`, capabilities platform, storage, clipboard; `server=score-script.js`.
+- `starhermit.txt`: `launch=index.html` (the engine's web loader, written by `npm run package` with `starhermit-files.json`), `engine.entry=native/main.ts`, `engine.version=1.44.1`, `engine.minor=44`, capabilities platform, storage, clipboard; `server=score-script.js`.
 - Controls: `control.*` actions focus_left/right/up/down (arrows), pick (Enter, Space, Numpad Enter), undo (U), hint (H), camera (C), pause (Esc); pads: D-pad / left stick focus, South picks, West hints, North undoes, right shoulder resets the camera, Start or East pauses. Players rebind in the runtime's Options. Pointer / touch: tap or click an uncovered tile (taps over 12 px or 600 ms are camera gestures and ignored; with Hold to confirm a 400 ms press picks); presses that start on the interface never reach the table (`ui.pointerCaptured()`).
 - Signed out the game makes no platform calls beyond the runtime's own; the Daily Steep's day comes from the platform clock (`serverNow`) when it answered, else the device's UTC date.
 
@@ -296,3 +296,9 @@ Non-goals remain unchanged: no monetization work, no native wrappers, no real-mo
 The string tables include complete regional variants for `fr-BE`, `de-BE`, `en-SG`, `en-HK`, `en-BQ`, `es-CO`, `de-IT`, `fr-IT`, `es-CL`, `es-AR`, `es-EC`, `de-BR`. These reuse the corresponding existing translations in their language family. The runtime can resolve the exact regional tag. Language selection is available from the game’s Options panel or F2 and is saved per player in `ui.language`. Changes apply during play. Additional national, regional and indigenous language packs are only shipped once every English message has a translation with intact placeholders and markup. Complete additional language tables: `ja-JP`, `nl-BE`, `zh-SG`, `ms-SG`, `ta-SG`, `zh-HK`, `yue-HK`, `nl-NL`, `sv-FI`, `et-EE`, `id-ID`, `vi-VN`, `fi-FI`, `da-DE`, `lb-BE`, `eu-FR`, `oc-FR`, `sl-IT`, `oc-IT`, `ru-FI`, `eu-ES`, `gl-ES`, `ru-EE`, `su-ID`, `co-FR`, `ca-FR`, `fur-IT`, `ca-IT`, `ca-ES`, `bew-ID`, `km-VN`.
 
 <!-- regional-localization:end -->
+
+## Engine 1.44.1
+
+Browser play uses the WebGPU-only StarHermit 1.44.1 web runtime. Automatic ray-traced shadows are enabled on supported Vulkan devices, with mapped-shadow fallbacks elsewhere. Packaging creates block-compressed runtime textures and compressed glTF copies, retaining original image fallbacks.
+
+The help screen replays through retained native UI while its contents, options, layout and key bindings are unchanged.
