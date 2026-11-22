@@ -5,7 +5,7 @@
 **Genre:** Selection puzzle  
 **Players:** 1 player; optional asynchronous score comparison  
 **Targets:** desktop browsers, mobile browsers, landscape and portrait where practical  
-**Rendering direction:** a StarHermit engine script game (TypeScript on the host API, engine 1.44.1, `engine.minor=44`): the table on `starhermit:scene`, the interface on `starhermit:ui`; played natively by the StarHermit client and in browsers by the engine's web runtime
+**Rendering direction:** a StarHermit engine script game (TypeScript on the host API, engine 1.47.0, `engine.minor=47`): the table on `starhermit:scene`, the interface on `starhermit:ui`; played natively by the StarHermit client and in browsers by the engine's web runtime
 
 ## 1. Product vision
 
@@ -208,7 +208,7 @@ No module may mutate rules state except through a validated command. Rendering c
 ## 6. StarHermit integration
 
 ### Packaging and launch
-- `starhermit.txt`: `launch=index.html` (the engine's web loader, written by `npm run package` with `starhermit-files.json`), `engine.entry=native/main.ts`, `engine.version=1.44.1`, `engine.minor=44`, capabilities platform, storage, clipboard; `server=score-script.js`.
+- `starhermit.txt`: `launch=index.html` (the engine's web loader, written by `npm run package` with `starhermit-files.json`), `engine.entry=native/main.ts`, `engine.version=1.47.0`, `engine.minor=47`, capabilities platform, storage, clipboard; `server=score-script.js`.
 - Controls: `control.*` actions focus_left/right/up/down (arrows), pick (Enter, Space, Numpad Enter), undo (U), hint (H), camera (C), pause (Esc); pads: D-pad / left stick focus, South picks, West hints, North undoes, right shoulder resets the camera, Start or East pauses. Players rebind in the runtime's Options. Pointer / touch: tap or click an uncovered tile (taps over 12 px or 600 ms are camera gestures and ignored; with Hold to confirm a 400 ms press picks); presses that start on the interface never reach the table (`ui.pointerCaptured()`).
 - Signed out the game makes no platform calls beyond the runtime's own; the Daily Steep's day comes from the platform clock (`serverNow`) when it answered, else the device's UTC date.
 
@@ -297,8 +297,12 @@ The string tables include complete regional variants for `fr-BE`, `de-BE`, `en-S
 
 <!-- regional-localization:end -->
 
-## Engine 1.44.1
+## Engine 1.47.0
 
-Browser play uses the WebGPU-only StarHermit 1.44.1 web runtime. Automatic ray-traced shadows are enabled on supported Vulkan devices, with mapped-shadow fallbacks elsewhere. Packaging creates block-compressed runtime textures and compressed glTF copies, retaining original image fallbacks.
+Browser play uses the WebGPU-only StarHermit 1.47.0 web runtime. Automatic ray-traced shadows are enabled on supported Vulkan devices, with mapped-shadow fallbacks elsewhere. Packaging creates block-compressed runtime textures and compressed glTF copies, retaining original image fallbacks.
 
 The help screen replays through retained native UI while its contents, options, layout and key bindings are unchanged.
+
+Browser rendering uses the engine's asynchronous pipeline creation so newly encountered materials do not stall the page. Native play retains the engine's synchronous pipeline behavior.
+
+Higher graphics tiers use native per-object motion blur for moving pieces and effects. Camera motion stays sharp, lower tiers omit the effect, and the runtime's Motion blur and Reduce motion preferences remain authoritative.

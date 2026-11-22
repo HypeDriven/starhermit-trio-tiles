@@ -784,6 +784,7 @@ export function applyLook(next: Look): void {
     vignette: { amount: 0.24, inner: 0.42, outer: 0.9, scale: [1.1, 1] },
   } : null;
   renderer.antialias = g.antialias;
+  renderer.motionBlur = g.bloom !== null ? { intensity: 0.25, samples: 8, maxPixels: 16, targetFps: 60, camera: false } : null;
 }
 function applyDetail(): void {
   if (!look || !built) return;
