@@ -79,12 +79,20 @@ for (const v of views.filter((x) => !process.env.VIEWS || process.env.VIEWS.spli
   const snap = () => page.evaluate(() => [...document.querySelectorAll('[role=button],[role=checkbox],[role=scrollbar]')]
     .map((e) => { const r = e.getBoundingClientRect(); return `${e.getAttribute('aria-label') ?? e.textContent}@${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)},${Math.round(r.height)}`; }).join('\n'));
   const frames = (n) => page.evaluate((n) => new Promise((r) => { let k = 0; const f = () => (++k >= n ? r() : requestAnimationFrame(f)); requestAnimationFrame(f); }), n);
-  /** Waits for the widgets to differ from `before` (when given, up to 4 s), then to hold still over two frames. */
+  // What a press changes, for `settle`: every mirrored node's role, name and state (named table areas included, so
+  // a tile pick that changes no button still counts), without rects (an idle animation is not a change).
+  const sig = () => page.evaluate(() => [...document.querySelectorAll('[role]:not(canvas)')]
+    .map((e) => `${e.getAttribute('role')}:${e.getAttribute('aria-label') ?? e.textContent}:${['disabled', 'pressed', 'checked', 'selected', 'expanded'].map((a) => e.getAttribute(`aria-${a}`) ?? '').join(',')}`).join('\n'));
+  /** Waits for the mirror to differ from `before` (a `sig()`, when given), then for the widgets to hold still over
+   * two frames. The change can take many slow frames on a busy GPU (4 s and more were seen), and a press aimed at
+   * the screen before it lands on the wrong widget, so the wait for it is long (20 s); a press that changes nothing
+   * in the mirror pays it, so such presses are rare. */
   const settle = async (before) => {
     const t0 = Date.now();
+    while (before !== undefined && (await sig()) === before && Date.now() - t0 < 20000) await frames(1);
+    const t1 = Date.now();
     let prev = await snap();
-    while (before !== undefined && prev === before && Date.now() - t0 < 4000) { await frames(1); prev = await snap(); }
-    while (Date.now() - t0 < 12000) { await frames(2); const s = await snap(); if (s === prev) return; prev = s; }
+    while (Date.now() - t1 < 12000) { await frames(2); const s = await snap(); if (s === prev) return; prev = s; }
   };
   /** A tap / click at window coordinates (CSS px). */
   const tapAt = async (x, y) => {
@@ -96,12 +104,14 @@ for (const v of views.filter((x) => !process.env.VIEWS || process.env.VIEWS.spli
     await page.waitForTimeout(250);
   };
   /** A press on a widget (or a table target): the mouse on the desktop, a finger on the phones. */
+  let step = '';
   const press = async (name) => {
+    step = `press ${name}`;
     const el = find(name);
     await el.waitFor({ timeout: 15000 });
     await settle();
     const b = await el.boundingBox();
-    const before = await snap();
+    const before = await sig();
     await tapAt(b.x + b.width / 2, b.y + b.height / 2);
     await settle(before);
   };
@@ -168,7 +178,7 @@ for (const v of views.filter((x) => !process.env.VIEWS || process.env.VIEWS.spli
       const el = page.getByText(/ tile, layer \d+, 1 of \d+\. Enter to pick\./).first();
       await settle();
       const bb = await el.boundingBox();
-      const before = await snap();
+      const before = await sig();
       await tapAt(bb.x + bb.width / 2, bb.y + bb.height / 2);
       await settle(before);
       await page.waitForTimeout(600);
@@ -182,7 +192,11 @@ for (const v of views.filter((x) => !process.env.VIEWS || process.env.VIEWS.spli
       await shot('practice-results');
     }
     reached = true;
-  } catch (e) { problems.push(`play: ${String(e.message || e).split('\n')[0]}`); await shot('failed'); }
+  } catch (e) {
+    problems.push(`play: ${step}: ${String(e.message || e).split('\n')[0]}`);
+    await shot('failed');
+    problems.push(`mirror: ${(await snap().catch(() => '')).split('\n').slice(0, 40).join(' | ')}`);
+  }
   const state = await page.evaluate(() => document.documentElement.dataset.starhermit ?? '');
   const ok = started && state === 'running' && problems.length === 0 && reached;
   failed ||= !ok;
