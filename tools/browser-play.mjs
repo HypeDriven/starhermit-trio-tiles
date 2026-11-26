@@ -72,6 +72,20 @@ for (const v of views.filter((x) => !process.env.VIEWS || process.env.VIEWS.spli
   await page.waitForTimeout(4000);
   const shot = async (name) => { if (shots) { mkdirSync(shots, { recursive: true }); await page.screenshot({ path: join(shots, `${v.name}-${name}.png`) }); } };
   const find = (name) => page.getByRole('button', { name, exact: true }).or(page.getByRole('checkbox', { name, exact: true })).or(page.getByText(name, { exact: true })).first();
+  // The mirror and the canvas move a frame at a time, and on the iGPU a frame takes 0.1-1.2 s, so an input aimed at
+  // what the mirror shows right after a press can land on the next screen (the title's Journey hit the mode menu's
+  // Challenge) or on a list still sliding in. Inputs wait for the widgets to hold still, and a press waits for its
+  // effect to show (or a few seconds, when it changes no widget).
+  const snap = () => page.evaluate(() => [...document.querySelectorAll('[role=button],[role=checkbox],[role=scrollbar]')]
+    .map((e) => { const r = e.getBoundingClientRect(); return `${e.getAttribute('aria-label') ?? e.textContent}@${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)},${Math.round(r.height)}`; }).join('\n'));
+  const frames = (n) => page.evaluate((n) => new Promise((r) => { let k = 0; const f = () => (++k >= n ? r() : requestAnimationFrame(f)); requestAnimationFrame(f); }), n);
+  /** Waits for the widgets to differ from `before` (when given, up to 4 s), then to hold still over two frames. */
+  const settle = async (before) => {
+    const t0 = Date.now();
+    let prev = await snap();
+    while (before !== undefined && prev === before && Date.now() - t0 < 4000) { await frames(1); prev = await snap(); }
+    while (Date.now() - t0 < 12000) { await frames(2); const s = await snap(); if (s === prev) return; prev = s; }
+  };
   /** A tap / click at window coordinates (CSS px). */
   const tapAt = async (x, y) => {
     if (cdp) {
@@ -85,14 +99,11 @@ for (const v of views.filter((x) => !process.env.VIEWS || process.env.VIEWS.spli
   const press = async (name) => {
     const el = find(name);
     await el.waitFor({ timeout: 15000 });
+    await settle();
     const b = await el.boundingBox();
-    const x = b.x + b.width / 2, y = b.y + b.height / 2;
-    if (cdp) {
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
-      await page.waitForTimeout(80);
-      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    } else await page.mouse.click(x, y);
-    await page.waitForTimeout(250);
+    const before = await snap();
+    await tapAt(b.x + b.width / 2, b.y + b.height / 2);
+    await settle(before);
   };
   let reached = false;
   const targetsOf = (state) => {
@@ -155,8 +166,11 @@ for (const v of views.filter((x) => !process.env.VIEWS || process.env.VIEWS.spli
       await shot('practice');
       await page.getByText(/ tile, layer \d+, 1 of \d+\. Enter to pick\./).first().waitFor({ timeout: 15000 });
       const el = page.getByText(/ tile, layer \d+, 1 of \d+\. Enter to pick\./).first();
+      await settle();
       const bb = await el.boundingBox();
+      const before = await snap();
       await tapAt(bb.x + bb.width / 2, bb.y + bb.height / 2);
+      await settle(before);
       await page.waitForTimeout(600);
       await shot('practice-picked');
       await press('Undo');
