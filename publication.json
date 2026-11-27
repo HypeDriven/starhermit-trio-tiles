@@ -12,7 +12,7 @@
     "metadataSource": "starhermit.txt",
     "createdAt": "2026-09-01T09:42:46.6421+00:00",
     "coverArtSource": "manifest",
-    "coverArtUpdatedAt": "2026-11-26T19:42:07.86021+00:00",
+    "coverArtUpdatedAt": "2026-11-27T17:08:08.939075+00:00",
     "submittedByUserId": "2712e04e-461b-4d23-81ae-e40b429128a8",
     "submittedByUsername": "starhermit",
     "hosting": {
@@ -22,9 +22,9 @@
       "pinnedCommitSha": null,
       "deployedCommitSha": null,
       "deployError": null,
-      "deployedAt": "2026-11-26T19:42:07.848259+00:00",
+      "deployedAt": "2026-11-27T17:08:08.928415+00:00",
       "externalLaunchUrl": null,
-      "engineVersion": "1.51.0",
+      "engineVersion": "1.53.0",
       "deployWarning": null
     },
     "description": "Select exposed tiles into a seven-slot tray, matching three identical symbols to clear them before the tray fills.",
@@ -36,19 +36,19 @@
     "links": [],
     "isDisabled": false
   },
-  "publishedAt": "2026-11-26T19:42:07.973Z",
-  "sourceCommit": "45353bb2fdb27852925c5e3f4d167ea6b034a961",
-  "bytesReceived": 1813743,
-  "archiveSha256": "e4aaa31e4e62b15e96c4d82d368dc837aed348a60c039324e156849152a7bb6e",
+  "publishedAt": "2026-11-27T17:08:09.103Z",
+  "sourceCommit": "7572426227bc3416e07d6dc0f05f293bed95756e",
+  "bytesReceived": 1813734,
+  "archiveSha256": "988f5ce126333309544d8e244f904ae3700fa383cd4749f86f39c5d5f680516e",
   "indexSha256": "728ed640d7353e0abe0c143595f22fe826aeeac08e716a7aba805736665a8d10",
   "result": {
     "clientPublished": true,
     "serverImageLoaded": false,
     "imageDigest": null,
-    "bytesReceived": 1813743,
+    "bytesReceived": 1813734,
     "mode": "replace",
     "filesRemoved": 0,
-    "engineVersion": "1.51.0",
+    "engineVersion": "1.53.0",
     "deployWarning": null
   },
   "liveVerification": {
